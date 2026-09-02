@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Generated feature stores and evaluation output
+*.h5d
+output/
+temp/
+
+# Local editor and operating-system files
+.DS_Store
+.vscode/
