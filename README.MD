@@ -201,7 +201,7 @@ data/                  Chord vocabularies and fold split files
   pages={581-595},
   keywords={Hidden Markov models;Harmonic analysis;Vocabulary;Transformers;Decoding;Convolutional neural networks;Accuracy;Speech processing;Music;Time-frequency analysis;Automatic chord estimation;deep learning;music information processing;machine leanrning},
   doi={10.1109/TASLPRO.2025.3646468}}
-
+```
 
 ### Upstream implementation and paper
 
