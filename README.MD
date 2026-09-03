@@ -191,15 +191,17 @@ data/                  Chord vocabularies and fold split files
 ### ChordFormer
 
 ```bibtex
-@misc{chordformer,
-    title = {ChordFormer},
-    note  = {IEEE Xplore document 11313568},
-    url   = {https://ieeexplore.ieee.org/abstract/document/11313568}
-}
-```
+@ARTICLE{11313568,
+  author={Akram, Muhammad Waseem and Dettori, Stefano and Colla, Valentina and Buttazzo, Giorgio Carlo},
+  journal={IEEE Transactions on Audio, Speech and Language Processing}, 
+  title={ChordFormer: A Conformer-Based Architecture for Large-Vocabulary Audio Chord Recognition}, 
+  year={2026},
+  volume={34},
+  number={},
+  pages={581-595},
+  keywords={Hidden Markov models;Harmonic analysis;Vocabulary;Transformers;Decoding;Convolutional neural networks;Accuracy;Speech processing;Music;Time-frequency analysis;Automatic chord estimation;deep learning;music information processing;machine leanrning},
+  doi={10.1109/TASLPRO.2025.3646468}}
 
-Use the published IEEE record to replace this short entry with the final
-author, venue, year, and DOI metadata when citing the work.
 
 ### Upstream implementation and paper
 
