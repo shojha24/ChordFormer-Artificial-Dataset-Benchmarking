@@ -7,12 +7,17 @@ from io_new.chordlab_io import ChordLabIO
 from extractors.xhmm_decoder import XHMMDecoder,prob_to_spectrogram
 from complex_chord import Chord,ChordTypeLimit,shift_complex_chord_array_list,complex_chord_chop,enum_to_dict,\
     TriadTypes,SeventhTypes,NinthTypes,EleventhTypes,ThirteenthTypes
-from mir.music_base import NUM_TO_ABS_SCALE
+import numpy as np
+if not hasattr(np, 'int'):
+    np.int = int
+if not hasattr(np, 'float'):
+    np.float = float
+
 import os
 import mir_eval
 import acqa_mir
-import numpy as np
 import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 class ExperimentTest():

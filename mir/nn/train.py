@@ -6,6 +6,10 @@ from torch.utils.data import DataLoader
 from mir.common import WORKING_PATH
 import os
 import numpy as np
+import contextlib
+
+if hasattr(torch, 'set_float32_matmul_precision'):
+    torch.set_float32_matmul_precision('high')
 
 class NetworkBehavior(nn.Module):
 
@@ -115,7 +119,7 @@ class NetworkInterface:
             pass
         train_set_loader=DataLoader(train_set,batch_size=batch_size,shuffle=train_set.need_shuffle,
                                     num_workers=train_set.num_workers,worker_init_fn=train_set.__init_training_worker,
-                                    collate_fn=val_set.collate_fn)
+                                    collate_fn=val_set.collate_fn,pin_memory=self.net.use_gpu)
         if(train_set.num_workers==0):
             train_set.init_worker(-1,True)
         if(val_set.num_workers>0):
@@ -123,7 +127,7 @@ class NetworkInterface:
             pass
         val_set_loader=DataLoader(val_set,batch_size=batch_size if val_batch_size is None else val_batch_size,shuffle=val_set.need_shuffle,
                                   num_workers=val_set.num_workers,worker_init_fn=val_set.__init_validation_worker,
-                                  collate_fn=val_set.collate_fn)
+                                  collate_fn=val_set.collate_fn,pin_memory=self.net.use_gpu)
         if(val_set.num_workers==0):
             val_set.init_worker(-1,False)
         if(round_per_val>=0):
@@ -134,6 +138,14 @@ class NetworkInterface:
         print(len(train_set),'samples','batch_size =',batch_size)
         for (learning_rate,batch_count) in zip(learning_rates,learning_rates_batch_count):
             print(batch_count,'mini batches for learning rate =',learning_rate,flush=True)
+
+        use_amp = self.net.use_gpu and torch.cuda.is_available()
+        amp_dtype = torch.bfloat16 if (use_amp and torch.cuda.is_bf16_supported()) else torch.float16
+        autocast_ctx = torch.autocast(device_type='cuda', dtype=amp_dtype) if use_amp else contextlib.nullcontext()
+        scaler = torch.cuda.amp.GradScaler(enabled=(use_amp and amp_dtype == torch.float16))
+        if use_amp:
+            print(f'Mixed precision (AMP) enabled with {amp_dtype}', flush=True)
+
         current_counter=0
         self.net.init_settings(True)
         for (learning_rate,batch_count) in zip(learning_rates,learning_rates_batch_count):
@@ -165,23 +177,29 @@ class NetworkInterface:
                                 return [send_to_gpu(sub_var) for sub_var in var]
                             if(isinstance(var,tuple)):
                                 return tuple(send_to_gpu(sub_var) for sub_var in var)
-                            return var.cuda()
+                            if hasattr(var, 'cuda'):
+                                return var.cuda(non_blocking=True)
+                            return var
                         if(self.net.use_gpu):
                             input_tuple=send_to_gpu(input_tuple)
                         self.optimizer.zero_grad()
-                        raw_loss=self.net.loss(*input_tuple)
+                        with autocast_ctx:
+                            raw_loss=self.net.loss(*input_tuple)
+                            if(isinstance(raw_loss,tuple)):
+                                loss=torch.sum(torch.stack(raw_loss))
+                            else:
+                                loss=raw_loss
                         if(isinstance(raw_loss,tuple)):
-                            loss=torch.sum(torch.stack(raw_loss))
                             running_loss=running_loss+np.array([x.item() for x in raw_loss])
                         else:
-                            loss=raw_loss
                             running_loss+=loss.item()
                         running_loss_count+=1
                         if(loss.grad_fn is None):
                             print('Warning: the loss of the batch does not have a grad_fn. Ignored.')
                         else:
-                            loss.backward()
-                            self.optimizer.step()
+                            scaler.scale(loss).backward()
+                            scaler.step(self.optimizer)
+                            scaler.update()
                         if(i%round_per_print==round_per_print-1):
                             if(len(running_loss)>1):
                                 loss_str='%.6f(%s)'%(running_loss.sum()/running_loss_count,
@@ -204,9 +222,10 @@ class NetworkInterface:
                                     val_input_tuple=send_to_gpu(val_input_tuple)
                                 self.net.eval()
                                 with torch.no_grad():
-                                    raw_val_loss=self.net.loss(*val_input_tuple)
+                                    with autocast_ctx:
+                                        raw_val_loss=self.net.loss(*val_input_tuple)
                                     if(isinstance(raw_val_loss,tuple)):
-                                        val_loss=val_loss+np.array([x.item() for x in raw_loss])
+                                        val_loss=val_loss+np.array([x.item() for x in raw_val_loss])
                                     else:
                                         val_loss=val_loss+raw_val_loss.item()
                                 self.net.train()
@@ -244,12 +263,13 @@ class NetworkInterface:
                             except StopIteration:
                                 break
                             if(self.net.use_gpu):
-                                val_input_tuple=(var.cuda() for var in val_input_tuple)
+                                val_input_tuple=send_to_gpu(val_input_tuple)
                             self.net.eval()
                             with torch.no_grad():
-                                raw_val_loss=self.net.loss(*val_input_tuple)
+                                with autocast_ctx:
+                                    raw_val_loss=self.net.loss(*val_input_tuple)
                                 if(isinstance(raw_val_loss,tuple)):
-                                    val_loss=val_loss+np.sum([x.item() for x in raw_loss])
+                                    val_loss=val_loss+np.sum([x.item() for x in raw_val_loss])
                                 else:
                                     val_loss=val_loss+raw_val_loss.item()
                             self.net.train()
@@ -260,6 +280,7 @@ class NetworkInterface:
                         print('[%f, %.2f%% (%d/%d)] val_loss: %.6f best_val_loss: %.6f (%d epochs away)' %
                               (learning_rate,(i+1)/batch_count*100,i+1,batch_count,
                                mean_val_loss,self.best_val_loss,self.best_epoch_dist),flush=True)
+
                         if(self.net.use_gpu):
                             self.net.cpu()
                         if(mean_val_loss<self.best_val_loss):

@@ -1,7 +1,6 @@
-import datasets
+import new_datasets as datasets
 from mir.nn.data_storage import FramedRAMDataStorage,FramedH5DataStorage
 import numpy as np
-import datasets
 from extractors.cqt import CQTV2
 from mir.extractors.misc import FrameCount
 from extractors.key_preprocess import FramedKey

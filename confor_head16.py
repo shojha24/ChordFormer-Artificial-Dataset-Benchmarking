@@ -10,18 +10,30 @@ from complex_chord import Chord,ChordTypeLimit,shift_complex_chord_array_list,co
     TriadTypes,SeventhTypes,NinthTypes,EleventhTypes,ThirteenthTypes,complex_chord_chop_list
 from train_eval_test_split import get_train_set_ids,get_test_set_ids,get_val_set_ids
 
-def set_specific_gpu(gpu_index=5):
+import os
+
+def set_specific_gpu(gpu_index=0):
     if torch.cuda.is_available():
         total_gpus = torch.cuda.device_count()
+        env_gpu = os.environ.get("CHORDFORMER_GPU")
+        if env_gpu is not None:
+            try:
+                gpu_index = int(env_gpu)
+            except ValueError:
+                pass
         if gpu_index < total_gpus:
             torch.cuda.set_device(gpu_index)
             print(f"Using GPU {gpu_index}: {torch.cuda.get_device_name(gpu_index)}")
-        else:
-            raise ValueError(f"GPU index {gpu_index} is out of range. Only {total_gpus} GPUs available.")
+        elif total_gpus > 0:
+            torch.cuda.set_device(0)
+            print(f"Using GPU 0 (fallback from {gpu_index}): {torch.cuda.get_device_name(0)}")
     else:
-        raise RuntimeError("No GPU is available.")
+        print("CUDA is not available. Using CPU.")
 
-set_specific_gpu()  # This will set the third GPU
+set_specific_gpu()
+
+if hasattr(torch, 'set_float32_matmul_precision'):
+    torch.set_float32_matmul_precision('high')
 
 SHIFT_LOW=-5
 SHIFT_HIGH=6
@@ -30,7 +42,7 @@ SPEC_DIM=252
 LSTM_TRAIN_LENGTH=1000
 
 chord_limit=ChordTypeLimit(
-    triad_limit=6,
+    triad_limit=8,
     seventh_limit=3,
     ninth_limit=3,
     eleventh_limit=2,
@@ -405,17 +417,15 @@ class ChordConformer(torch.nn.Module):
 
 class ChordNet(NetworkBehavior):
 
-    def __init__(self,cross_subpart_counter,triad_only=False):
+    def __init__(self,cross_subpart_counter,triad_only=False,chord_limit=chord_limit):
         super(ChordNet, self).__init__()
         self.triad_only=triad_only
-
-        self.chordfor = ChordConformer(input_dim=256, num_heads=16, ffn_dim=1024, num_layers=4, depthwise_conv_kernel_size=31, output_dim=100)
-  
+        self.chord_limit=chord_limit
 
         self.hidden_dim1=192
-        
-        self.output_dim1=chord_limit.triad_limit*12+2+12
-        self.output_dim2=chord_limit.seventh_limit+chord_limit.ninth_limit+chord_limit.eleventh_limit+chord_limit.thirteenth_limit+4
+        self.output_dim1=self.chord_limit.triad_limit*12+2+12
+        self.output_dim2=self.chord_limit.seventh_limit+self.chord_limit.ninth_limit+self.chord_limit.eleventh_limit+self.chord_limit.thirteenth_limit+4
+        self.chordfor = ChordConformer(input_dim=256, num_heads=16, ffn_dim=1024, num_layers=4, depthwise_conv_kernel_size=31, output_dim=self.output_dim1+self.output_dim2)
         self.final_fc1=nn.Linear(self.hidden_dim1,self.output_dim1+self.output_dim2)
 
         #self.loss_calc=FocalLoss(gamma=2.0)
@@ -433,13 +443,13 @@ class ChordNet(NetworkBehavior):
         x=self.chordfor(x)
         x1=x.reshape((batch_size*seq_length,self.output_dim1+self.output_dim2))
 
-        bass_del=chord_limit.bass_slice_begin+12+1
-        seventh_del=bass_del+chord_limit.seventh_limit+1
-        ninth_del=seventh_del+chord_limit.ninth_limit+1
-        eleventh_del=ninth_del+chord_limit.eleventh_limit+1
-        thirteenth_del=eleventh_del+chord_limit.thirteenth_limit+1
-        return x1[:,:chord_limit.bass_slice_begin],\
-            x1[:,chord_limit.bass_slice_begin:bass_del],\
+        bass_del=self.chord_limit.bass_slice_begin+12+1
+        seventh_del=bass_del+self.chord_limit.seventh_limit+1
+        ninth_del=seventh_del+self.chord_limit.ninth_limit+1
+        eleventh_del=ninth_del+self.chord_limit.eleventh_limit+1
+        thirteenth_del=eleventh_del+self.chord_limit.thirteenth_limit+1
+        return x1[:,:self.chord_limit.bass_slice_begin],\
+            x1[:,self.chord_limit.bass_slice_begin:bass_del],\
             x1[:,bass_del:seventh_del],\
             x1[:,seventh_del:ninth_del],\
             x1[:,ninth_del:eleventh_del],\
@@ -463,13 +473,15 @@ class ChordNet(NetworkBehavior):
 
 class ChordNetCNN(NetworkBehavior):
 
-    def __init__(self,cross_subpart_counter):
+    def __init__(self,cross_subpart_counter,triad_only=False,chord_limit=chord_limit):
         super(ChordNetCNN, self).__init__()
+        self.triad_only=triad_only
+        self.chord_limit=chord_limit
         self.audio_feature_block=CNNFeatureExtractor()
 
         self.hidden_dim1=192
-        self.output_dim1=chord_limit.triad_limit*12+2+12
-        self.output_dim2=chord_limit.seventh_limit+chord_limit.ninth_limit+chord_limit.eleventh_limit+chord_limit.thirteenth_limit+4
+        self.output_dim1=self.chord_limit.triad_limit*12+2+12
+        self.output_dim2=self.chord_limit.seventh_limit+self.chord_limit.ninth_limit+self.chord_limit.eleventh_limit+self.chord_limit.thirteenth_limit+4
         self.final_fc1=nn.Linear(self.audio_feature_block.output_size,self.output_dim1+self.output_dim2)
 
         #self.loss_calc=FocalLoss(gamma=2.0)
@@ -489,13 +501,13 @@ class ChordNetCNN(NetworkBehavior):
         x=self.audio_feature_block(x)
         x1=self.final_fc1(x).reshape((batch_size*seq_length,self.output_dim1+self.output_dim2))
 
-        bass_del=chord_limit.bass_slice_begin+12+1
-        seventh_del=bass_del+chord_limit.seventh_limit+1
-        ninth_del=seventh_del+chord_limit.ninth_limit+1
-        eleventh_del=ninth_del+chord_limit.eleventh_limit+1
-        thirteenth_del=eleventh_del+chord_limit.thirteenth_limit+1
-        return x1[:,:chord_limit.bass_slice_begin],\
-            x1[:,chord_limit.bass_slice_begin:bass_del],\
+        bass_del=self.chord_limit.bass_slice_begin+12+1
+        seventh_del=bass_del+self.chord_limit.seventh_limit+1
+        ninth_del=seventh_del+self.chord_limit.ninth_limit+1
+        eleventh_del=ninth_del+self.chord_limit.eleventh_limit+1
+        thirteenth_del=eleventh_del+self.chord_limit.thirteenth_limit+1
+        return x1[:,:self.chord_limit.bass_slice_begin],\
+            x1[:,self.chord_limit.bass_slice_begin:bass_del],\
             x1[:,bass_del:seventh_del],\
             x1[:,seventh_del:ninth_del],\
             x1[:,ninth_del:eleventh_del],\
@@ -559,11 +571,11 @@ if __name__ == '__main__':
         f=open('data/cross_subpart_weight%d.pkl'%0,'rb')
         cross_subpart_counter=pickle.load(f)
         f.close()
-    train_provider=FramedDataProvider(train_sample_length=LSTM_TRAIN_LENGTH,shift_low=SHIFT_LOW,shift_high=SHIFT_HIGH,num_workers=4,average_samples_per_song=1)
+    train_provider=FramedDataProvider(train_sample_length=LSTM_TRAIN_LENGTH,shift_low=SHIFT_LOW,shift_high=SHIFT_HIGH,num_workers=8,average_samples_per_song=1)
     train_provider.link(storage_x,CQTPitchShifter(SPEC_DIM,SHIFT_LOW,SHIFT_HIGH),subrange=train_indices)
     train_provider.link(storage_y,ComplexChordShifter(),subrange=train_indices)
 
-    val_provider=FramedDataProvider(train_sample_length=-1,shift_low=0,shift_high=0,num_workers=4,average_samples_per_song=1,need_shuffle=False)
+    val_provider=FramedDataProvider(train_sample_length=-1,shift_low=0,shift_high=0,num_workers=8,average_samples_per_song=1,need_shuffle=False)
     val_provider.link(storage_x,CQTPitchShifter(SPEC_DIM,SHIFT_LOW,SHIFT_HIGH),subrange=val_indices)
     val_provider.link(storage_y,ComplexChordShifter(),subrange=val_indices)
 
@@ -573,11 +585,11 @@ if __name__ == '__main__':
                              'chordformer_head16(1.0,1.0)_s%d'%slice_id,load_checkpoint=True)
     print(trainer)
     if(slice_id==-1):
-    	trainer.train_supervised(train_provider,val_provider,batch_size=24,
-                             learning_rates_dict={1e-3:35,1e-4:25,1e-5:15,1e-6:10},round_per_print=10,round_per_save=500,
-                             round_per_val=-1,early_end_epochs=100,val_batch_size=1)
+    	trainer.train_supervised(train_provider,val_provider,batch_size=48,
+                             learning_rates_dict={1e-3:28,1e-4:15,1e-5:10,1e-6:5},round_per_print=10,round_per_save=500,
+                             round_per_val=-1,early_end_epochs=5,val_batch_size=1)
     else:
-    	trainer.train_supervised(train_provider,val_provider,batch_size=24,
-                                learning_rates_dict={1e-3:60,1e-4:30,1e-5:30,1e-6:10},round_per_print=10,round_per_save=500,
+    	trainer.train_supervised(train_provider,val_provider,batch_size=48,
+                                 learning_rates_dict={1e-3:28,1e-4:15,1e-5:10,1e-6:5},round_per_print=10,round_per_save=500,
                                  round_per_val=-1,early_end_epochs=5,val_batch_size=1)
     

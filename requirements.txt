@@ -1,4 +1,5 @@
 torch==2.2.2
+setuptools<70
 pretty-midi==0.2.10
 h5py==3.11.0
 matplotlib==3.10.3

@@ -77,8 +77,8 @@ class ThirteenthTypes:
 class SuffixDecoder:
     BASIC_TYPES=['.','maj','min','sus4','sus2','dim','aug','5','1']
     EXTENDED_TYPES={
-        'maj6':[TriadTypes.maj,0,0,0,ThirteenthTypes.add_13],
-        'min6':[TriadTypes.min,0,0,0,ThirteenthTypes.add_13],
+        'maj6':[TriadTypes.maj,SeventhTypes.add_bb7,0,0,0],
+        'min6':[TriadTypes.min,SeventhTypes.add_bb7,0,0,0],
         '7':[TriadTypes.maj,SeventhTypes.add_b7,0,0,0],
         'maj7':[TriadTypes.maj,SeventhTypes.add_7,0,0,0],
         'min7':[TriadTypes.min,SeventhTypes.add_b7,0,0,0],
@@ -111,7 +111,7 @@ class SuffixDecoder:
         '#11':[11,EleventhTypes.add_s11],
         '13':[13,ThirteenthTypes.add_13],
         'b13':[13,ThirteenthTypes.add_b13],
-        '6':[6,ThirteenthTypes.add_13],
+        '6':[7,SeventhTypes.add_bb7],
         'b6':[6,ThirteenthTypes.add_b13],
         'bb6':[6,ThirteenthTypes.add_bb13],
         '#4':[5,TriadTypes.x],
@@ -291,6 +291,8 @@ def shift_complex_chord_array_list(array,shift):
 def create_tag_list(chord_limit):
     result=['N']
     triad_dict=enum_to_dict(TriadTypes)
+    triad_dict[TriadTypes.power]='5'
+    triad_dict[TriadTypes.one]='1'
     for i in range(1,chord_limit.triad_limit+1):
         result+=['%s:%s'%(NUM_TO_ABS_SCALE[j],triad_dict[i]) for j in range(12)]
     result+=['bass %s'%(NUM_TO_ABS_SCALE[j]) for j in range(12)]

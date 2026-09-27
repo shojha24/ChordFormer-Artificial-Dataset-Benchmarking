@@ -23,4 +23,6 @@ C:dim
 C:aug
 C:min
 C:maj
+C:5
+C:1
 N
