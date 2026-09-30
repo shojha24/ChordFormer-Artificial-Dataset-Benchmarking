@@ -1,6 +1,5 @@
 from mir.nn.train import NetworkInterface
 import mir.io as io
-import datasets
 from extractors.cqt import CQTV2,SimpleChordToID
 from mir import io,DataEntry
 from io_new.chordlab_io import ChordLabIO
@@ -324,13 +323,18 @@ def main():
     q.calc_accuracy()
     q.draw_confusion_mat()
 
-def eval_submission(reweight_factor=1.0, reweight_max=1.0, chord_dict='extended'):
+def eval_submission(reweight_factor=1.0, reweight_max=1.0, chord_dict='extended', output_pattern=None):
 
     from settings import JAM_DATASET_PATH
     dict_file = f'data/{chord_dict}_chord_list.txt' if os.path.exists(f'data/{chord_dict}_chord_list.txt') else 'data/submission_chord_list.txt'
     ExperimentTest.ET_confusion_chord=extract_quality_list_from_file(dict_file)
-    q = ExperimentTest(True,os.path.join(JAM_DATASET_PATH,'chordlab')+'/',"output/output_chordformer_head16(%.1f,%.1f)"%(reweight_factor,reweight_max)+"_s%d.best_hmm_full/jam/")
+    if output_pattern is None:
+        output_pattern = "output/output_chordformer_head16(%.1f,%.1f)"%(reweight_factor,reweight_max)+"_s%d.best_hmm_full/jam/"
+    q = ExperimentTest(True,os.path.join(JAM_DATASET_PATH,'chordlab')+'/',output_pattern)
     q.calc_accuracy()
     q.draw_confusion_mat()
+
 if __name__ == "__main__":
-    eval_submission(1.0,1.0)
+    import sys
+    out_pat = sys.argv[1] if len(sys.argv) > 1 else None
+    eval_submission(1.0, 1.0, output_pattern=out_pat)

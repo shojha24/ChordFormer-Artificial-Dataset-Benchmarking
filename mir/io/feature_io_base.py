@@ -29,8 +29,7 @@ class FeatureIO(ABC):
 
     def try_mkdir(self, filename):
         folder=os.path.dirname(filename)
-        if(not os.path.isdir(folder)):
-            os.makedirs(folder)
+        os.makedirs(folder, exist_ok=True)
 
     def create(self, data, filename, entry):
         self.try_mkdir(filename)

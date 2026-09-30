@@ -7,8 +7,7 @@ import numpy as np
 
 def mkdir_for_file(path):
     folder_path=os.path.dirname(path)
-    if(not os.path.isdir(folder_path)):
-        os.makedirs(folder_path)
+    os.makedirs(folder_path, exist_ok=True)
     return path
 
 class AbstractDataStorage(ABC):

@@ -17,8 +17,7 @@ def pickle_write(data, filename):
 
 def try_mkdir(filename):
     folder=os.path.dirname(filename)
-    if(not os.path.isdir(folder)):
-        os.makedirs(folder)
+    os.makedirs(folder, exist_ok=True)
 
 class ExtractorBase(ABC):
 

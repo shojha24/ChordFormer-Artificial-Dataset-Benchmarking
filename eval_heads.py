@@ -59,12 +59,12 @@ def viterbi_decode_crf(probs: np.ndarray, penalty: float = 2.0, device: torch.de
 
     return decoded.cpu().numpy()
 
-def evaluate_heads(max_songs=None, crf_penalty=2.0, save_path=None):
+def evaluate_heads(model_pattern='chordformer_head16(1.0,1.0)_s%d.best', max_songs=None, crf_penalty=2.0, save_path=None):
     if save_path is None:
         save_path = f'eval_heads_crf_p{crf_penalty:.1f}_report.txt' if (crf_penalty and crf_penalty > 0) else 'eval_heads_report.txt'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     mode_str = f"CRF Viterbi Decoding (penalty={crf_penalty})" if (crf_penalty and crf_penalty > 0) else "Raw ArgMax (No CRF)"
-    print(f"Evaluating 6 heads on {device} using {mode_str} across all 5 cross-validation folds...")
+    print(f"Evaluating 6 heads on {device} using {mode_str} with model pattern '{model_pattern}' across all 5 cross-validation folds...")
 
     storage_x = FramedH5DataStorage('jams_cqt')
     storage_y = FramedH5DataStorage('jams_xchord')
@@ -76,7 +76,7 @@ def evaluate_heads(max_songs=None, crf_penalty=2.0, save_path=None):
     # Load 5 fold models
     models = []
     for f in range(5):
-        net_name = f'chordformer_head16(1.0,1.0)_s{f}.best'
+        net_name = model_pattern % f
         print(f"Loading checkpoint {net_name}...")
         model = NetworkInterface(ChordNet(None, triad_only=False), net_name, load_checkpoint=True)
         models.append(model)
@@ -314,6 +314,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Multi-head chord evaluation with optional CRF Viterbi decoding")
     parser.add_argument('--from_lab', action='store_true', help='Evaluate directly from generated .lab files without re-running network inference')
     parser.add_argument('--lab_dir', type=str, default='output/output_chordformer_head16(1.0,1.0)_s%d.best_hmm_full/jam/', help='Directory containing .lab files')
+    parser.add_argument('--model_pattern', type=str, default='chordformer_head16(1.0,1.0)_s%d.best', help='Model checkpoint pattern (e.g. chordformer_head16_synth_ft_s%d.best)')
     parser.add_argument('--max_songs', type=int, default=None, help='Limit number of test songs (default: all 1217)')
     parser.add_argument('--penalty', type=float, default=2.0, help='CRF transition penalty (default 2.0 based on Eq. 12)')
     parser.add_argument('--no_crf', action='store_true', help='Disable CRF decoding and use raw argmax')
@@ -325,4 +326,4 @@ if __name__ == '__main__':
         evaluate_heads_from_lab(lab_dir=args.lab_dir, max_songs=args.max_songs, save_path=save_path)
     else:
         penalty = 0.0 if args.no_crf else args.penalty
-        evaluate_heads(max_songs=args.max_songs, crf_penalty=penalty, save_path=args.save_path)
+        evaluate_heads(model_pattern=args.model_pattern, max_songs=args.max_songs, crf_penalty=penalty, save_path=args.save_path)

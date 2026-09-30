@@ -93,6 +93,12 @@ class SuffixDecoder:
         '13':[TriadTypes.maj,SeventhTypes.add_b7,NinthTypes.add_9,EleventhTypes.add_11,ThirteenthTypes.add_13],
         'maj13':[TriadTypes.maj,SeventhTypes.add_7,NinthTypes.add_9,EleventhTypes.add_11,ThirteenthTypes.add_13],
         'min13':[TriadTypes.min,SeventhTypes.add_b7,NinthTypes.add_9,EleventhTypes.add_11,ThirteenthTypes.add_13],
+        '7sus4':[TriadTypes.sus4,SeventhTypes.add_b7,0,0,0],
+        '9sus4':[TriadTypes.sus4,SeventhTypes.add_b7,NinthTypes.add_9,0,0],
+        '13sus4':[TriadTypes.sus4,SeventhTypes.add_b7,NinthTypes.add_9,EleventhTypes.add_11,ThirteenthTypes.add_13],
+        'aug7':[TriadTypes.aug,SeventhTypes.add_b7,0,0,0],
+        'augmaj7':[TriadTypes.aug,SeventhTypes.add_7,0,0,0],
+        'aug9':[TriadTypes.aug,SeventhTypes.add_b7,NinthTypes.add_9,0,0],
         '':[TriadTypes.one,0,0,0,0],
         'N':[TriadTypes.none,-2,-2,-2,-2],
         'X':[-2,-2,-2,-2,-2]
@@ -222,7 +228,10 @@ class Chord:
             if('/' in suffix):
                 slash_pos=suffix.index('/')
                 bass_str=suffix[slash_pos+1:]
-                self.bass=(scale_name_to_value(bass_str)+self.root)%12
+                if bass_str and bass_str[0] in 'ABCDEFG':
+                    self.bass=get_scale_and_suffix(bass_str)[0]
+                else:
+                    self.bass=(scale_name_to_value(bass_str)+self.root)%12
                 suffix=suffix[:slash_pos]
             [self.triad,self.seventh,self.ninth,self.eleventh,self.thirteenth]=SuffixDecoder.decode(suffix)
         elif(name=='N'):

@@ -52,27 +52,28 @@ chord_limit=ChordTypeLimit(
 
 class ReweightedLoss(nn.Module):
 
-    def __init__(self,counter,power=1.0,max_clip=1.0,gpu=False,triad_only=False):
+    def __init__(self,counter=None,power=1.0,max_clip=1.0,gpu=False,triad_only=False):
         super(ReweightedLoss, self).__init__()
         self.weight=[None]*6
-        for i in range(6):
-            if(i==0 or i==1):
-                self.weight[i]=torch.tensor([counter[i][(j+11)//12] for j in range(len(counter[i])*12-11)],dtype=torch.float32)
-            else:
-                self.weight[i]=torch.tensor(counter[i],dtype=torch.float32)
-            self.weight[i]=torch.pow(self.weight[i].max()/self.weight[i],power)
-            self.weight[i][self.weight[i]>max_clip]=max_clip
-            if(gpu==True):
-                self.weight[i]=self.weight[i].cuda()
+        if(counter is not None):
+            for i in range(6):
+                if(i==0 or i==1):
+                    self.weight[i]=torch.tensor([counter[i][(j+11)//12] for j in range(len(counter[i])*12-11)],dtype=torch.float32)
+                else:
+                    self.weight[i]=torch.tensor(counter[i],dtype=torch.float32)
+                self.weight[i]=torch.pow(self.weight[i].max()/self.weight[i],power)
+                self.weight[i][self.weight[i]>max_clip]=max_clip
+                if(gpu==True):
+                    self.weight[i]=self.weight[i].cuda()
         self.triad_only=triad_only
 
 
     def forward(self, output, tag):
         def conditional_classifier_loss(a,b,weight=None):
             if((b<0).all()):
-                return torch.tensor(0,device=b.device)
-            loss=F.cross_entropy(a[b>=0],b[b>=0],weight=weight[:a.shape[1]])
-            #loss_term=self.loss_calc(a[b>=0],b[b>=0])
+                return torch.tensor(0.0,device=b.device)
+            w = weight[:a.shape[1]] if weight is not None else None
+            loss=F.cross_entropy(a[b>=0],b[b>=0],weight=w)
             return loss
         if(self.triad_only):
             result=conditional_classifier_loss(output[0],tag[:,0],weight=self.weight[0])
@@ -429,8 +430,7 @@ class ChordNet(NetworkBehavior):
         self.final_fc1=nn.Linear(self.hidden_dim1,self.output_dim1+self.output_dim2)
 
         #self.loss_calc=FocalLoss(gamma=2.0)
-        if(cross_subpart_counter is not None):
-            self.loss_reweight=ReweightedLoss(cross_subpart_counter,power=1.0,max_clip=1.0,gpu=self.use_gpu,triad_only=triad_only)
+        self.loss_reweight=ReweightedLoss(cross_subpart_counter,power=1.0,max_clip=1.0,gpu=self.use_gpu,triad_only=triad_only)
     
 
     def forward(self, x):
@@ -485,8 +485,7 @@ class ChordNetCNN(NetworkBehavior):
         self.final_fc1=nn.Linear(self.audio_feature_block.output_size,self.output_dim1+self.output_dim2)
 
         #self.loss_calc=FocalLoss(gamma=2.0)
-        if(cross_subpart_counter is not None):
-            self.loss_reweight=ReweightedLoss(cross_subpart_counter,power=1.0,max_clip=1.0,gpu=self.use_gpu,triad_only=triad_only)
+        self.loss_reweight=ReweightedLoss(cross_subpart_counter,power=1.0,max_clip=1.0,gpu=self.use_gpu,triad_only=triad_only)
     def init_hidden(self,batch_size,hidden_dim):
         c_0=torch.zeros(2,batch_size,hidden_dim//2)
         h_0=torch.zeros(2,batch_size,hidden_dim//2)
