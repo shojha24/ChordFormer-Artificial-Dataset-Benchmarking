@@ -26,10 +26,10 @@ def convert_all():
     print(f"Converting {total_songs} synthetic songs to .lab format in {OUT_LAB_DIR}...")
     for i in range(total_songs):
         song_name = f"song_{i}"
-        if i < 2500:
+        if i < 3500:
             json_path = os.path.join(POP_DIR, f"song_{i}.json")
         else:
-            json_path = os.path.join(JAZZ_DIR, f"song_{i - 2500}.json")
+            json_path = os.path.join(JAZZ_DIR, f"song_{i - 3500}.json")
 
         if not os.path.exists(json_path):
             raise FileNotFoundError(f"Missing JSON: {json_path}")
