@@ -52,27 +52,29 @@ chord_limit=ChordTypeLimit(
 
 class ReweightedLoss(nn.Module):
 
-    def __init__(self,counter,power=1.0,max_clip=1.0,gpu=False,triad_only=False):
+    def __init__(self,counter=None,power=0.5,max_clip=10.0,gpu=False,triad_only=False):
         super(ReweightedLoss, self).__init__()
         self.weight=[None]*6
-        for i in range(6):
-            if(i==0 or i==1):
-                self.weight[i]=torch.tensor([counter[i][(j+11)//12] for j in range(len(counter[i])*12-11)],dtype=torch.float32)
-            else:
-                self.weight[i]=torch.tensor(counter[i],dtype=torch.float32)
-            self.weight[i]=torch.pow(self.weight[i].max()/self.weight[i],power)
-            self.weight[i][self.weight[i]>max_clip]=max_clip
-            if(gpu==True):
-                self.weight[i]=self.weight[i].cuda()
+        if(counter is not None):
+            for i in range(6):
+                if(i==0 or i==1):
+                    self.weight[i]=torch.tensor([counter[i][(j+11)//12] for j in range(len(counter[i])*12-11)],dtype=torch.float32)
+                else:
+                    self.weight[i]=torch.tensor(counter[i],dtype=torch.float32)
+                raw_ratio = self.weight[i].max() / self.weight[i].clamp(min=1.0)
+                self.weight[i]=torch.pow(raw_ratio,power)
+                self.weight[i][self.weight[i]>max_clip]=max_clip
+                if(gpu==True):
+                    self.weight[i]=self.weight[i].cuda()
         self.triad_only=triad_only
 
 
     def forward(self, output, tag):
         def conditional_classifier_loss(a,b,weight=None):
             if((b<0).all()):
-                return torch.tensor(0,device=b.device)
-            loss=F.cross_entropy(a[b>=0],b[b>=0],weight=weight[:a.shape[1]])
-            #loss_term=self.loss_calc(a[b>=0],b[b>=0])
+                return torch.tensor(0.0,device=b.device)
+            w = weight.to(a.device)[:a.shape[1]] if weight is not None else None
+            loss=F.cross_entropy(a[b>=0],b[b>=0],weight=w)
             return loss
         if(self.triad_only):
             result=conditional_classifier_loss(output[0],tag[:,0],weight=self.weight[0])
@@ -417,10 +419,17 @@ class ChordConformer(torch.nn.Module):
 
 class ChordNet(NetworkBehavior):
 
-    def __init__(self,cross_subpart_counter,triad_only=False,chord_limit=chord_limit):
+    def __init__(self,cross_subpart_counter,triad_only=False,chord_limit=chord_limit,
+                 power=0.5,max_clip=10.0,discriminative_lr=False,lr_scales=None):
         super(ChordNet, self).__init__()
         self.triad_only=triad_only
         self.chord_limit=chord_limit
+        self.discriminative_lr=discriminative_lr
+        self.lr_scales=lr_scales or {
+            'bottom_layers': 1.0,
+            'top_layers': 0.5,
+            'head': 0.1,
+        }
 
         self.hidden_dim1=192
         self.output_dim1=self.chord_limit.triad_limit*12+2+12
@@ -430,8 +439,70 @@ class ChordNet(NetworkBehavior):
 
         #self.loss_calc=FocalLoss(gamma=2.0)
         if(cross_subpart_counter is not None):
-            self.loss_reweight=ReweightedLoss(cross_subpart_counter,power=1.0,max_clip=1.0,gpu=self.use_gpu,triad_only=triad_only)
-    
+            self.loss_reweight=ReweightedLoss(cross_subpart_counter,power=power,max_clip=max_clip,gpu=self.use_gpu,triad_only=triad_only)
+        else:
+            self.loss_reweight=None
+
+    def get_optimizer(self):
+        if not self.discriminative_lr:
+            return torch.optim.AdamW(self.parameters())
+
+        bottom_params = []
+        top_params = []
+        for idx, layer in enumerate(self.chordfor.conformer_layers):
+            if idx < 2:
+                bottom_params.extend(layer.parameters())
+            else:
+                top_params.extend(layer.parameters())
+
+        head_params = list(self.chordfor.output_layer.parameters())
+        if hasattr(self, 'final_fc1'):
+            head_params.extend(self.final_fc1.parameters())
+
+        param_groups = [
+            {
+                'params': [p for p in bottom_params if p.requires_grad],
+                'lr_scale': self.lr_scales.get('bottom_layers', 1.0),
+                'name': 'bottom_conformer'
+            },
+            {
+                'params': [p for p in top_params if p.requires_grad],
+                'lr_scale': self.lr_scales.get('top_layers', 0.5),
+                'name': 'top_conformer'
+            },
+            {
+                'params': [p for p in head_params if p.requires_grad],
+                'lr_scale': self.lr_scales.get('head', 0.1),
+                'name': 'classification_head'
+            },
+        ]
+        return torch.optim.AdamW(param_groups)
+
+    def evaluate_batch(self, x, y):
+        output = self.feed(x)
+        tag = y.view((-1, 6))
+        targets = [
+            tag[:, 0],
+            tag[:, 1] + 1,
+            tag[:, 2],
+            tag[:, 3],
+            tag[:, 4],
+            tag[:, 5]
+        ]
+        batch_stats = []
+        for h in range(6):
+            pred = output[h].argmax(dim=1)
+            t = targets[h]
+            num_classes = output[h].shape[1]
+            mask = (t >= 0) & (t < num_classes)
+            if mask.sum() > 0:
+                p_m = pred[mask].detach().cpu().numpy()
+                t_m = t[mask].detach().cpu().numpy()
+                cm = np.bincount(t_m * num_classes + p_m, minlength=num_classes * num_classes).reshape((num_classes, num_classes))
+            else:
+                cm = np.zeros((num_classes, num_classes), dtype=np.int64)
+            batch_stats.append(cm)
+        return batch_stats
 
     def forward(self, x):
         batch_size=x.shape[0]
@@ -548,48 +619,81 @@ class ComplexChordShifter(AbstractPitchShifter):
         return shift_complex_chord_array_list(complex_chord_chop_list(data,chord_limit),shift)
 
 if __name__ == '__main__':
-    TOTAL_SLICE_COUNT=5
-    import sys,pickle
-    slice_id=int(sys.argv[1])
-    if(slice_id>=5 or slice_id<-1):
-        raise Exception('Invalid input')
-    storage_x=FramedH5DataStorage('jams_cqt')
-    storage_y=FramedH5DataStorage('jams_xchord')
+    TOTAL_SLICE_COUNT = 5
+    import argparse
+    import pickle
+
+    parser = argparse.ArgumentParser(description="Stage 2: Real Dataset Training for ChordFormer (Baseline & Reweighted)")
+    parser.add_argument('slice_id', type=int, help='Slice / Fold ID (0..4, or -1 for all folds)')
+    parser.add_argument('--power', type=float, default=0.5, help='ReweightedLoss power exponent (default: 0.5)')
+    parser.add_argument('--max_clip', type=float, default=10.0, help='ReweightedLoss max_clip limit (default: 10.0)')
+    parser.add_argument('--save_name', type=str, default=None, help='Model save name')
+    parser.add_argument('--batch_size', type=int, default=48, help='Batch size (default: 48)')
+    parser.add_argument('--val_batch_size', type=int, default=1, help='Validation batch size (default: 1)')
+    parser.add_argument('--val_metric', type=str, default='loss', choices=['loss', 'macro', 'composite'], help='Validation checkpoint selection metric (default: loss)')
+    parser.add_argument('--num_workers', type=int, default=8, help='Worker threads (default: 8)')
+    args = parser.parse_args()
+
+    slice_id = args.slice_id
+    if slice_id >= 5 or slice_id < -1:
+        raise ValueError('Invalid slice_id: must be 0..4, or -1 for full dataset')
+
+    storage_x = FramedH5DataStorage('jams_cqt')
+    storage_y = FramedH5DataStorage('jams_xchord')
     storage_x.load_meta()
-    song_count=storage_x.total_song_count
-    if(0<=slice_id and slice_id<=5):
-        print('Train on slice %d'%slice_id)
-        f=open('data/cross_subpart_weight%d.pkl'%slice_id,'rb')
-        cross_subpart_counter=pickle.load(f)
-        f.close()
-        train_indices=get_train_set_ids(slice_id)
-        val_indices=get_val_set_ids(slice_id)
+    song_count = storage_x.total_song_count
+
+    if 0 <= slice_id <= 4:
+        print('Train on slice %d' % slice_id)
+        with open('data/cross_subpart_weight%d.pkl' % slice_id, 'rb') as f:
+            cross_subpart_counter = pickle.load(f)
+        train_indices = get_train_set_ids(slice_id)
+        val_indices = get_val_set_ids(slice_id)
     else:
-        train_indices=np.arange(song_count)
-        val_indices=np.arange(0,1) # fake validation here
-        # todo: weight calculation for full dataset
-        f=open('data/cross_subpart_weight%d.pkl'%0,'rb')
-        cross_subpart_counter=pickle.load(f)
-        f.close()
-    train_provider=FramedDataProvider(train_sample_length=LSTM_TRAIN_LENGTH,shift_low=SHIFT_LOW,shift_high=SHIFT_HIGH,num_workers=8,average_samples_per_song=1)
-    train_provider.link(storage_x,CQTPitchShifter(SPEC_DIM,SHIFT_LOW,SHIFT_HIGH),subrange=train_indices)
-    train_provider.link(storage_y,ComplexChordShifter(),subrange=train_indices)
+        print('Train on full dataset (-1)')
+        train_indices = np.arange(song_count)
+        val_indices = np.arange(0, 1) # dummy validation
+        with open('data/cross_subpart_weight0.pkl', 'rb') as f:
+            cross_subpart_counter = pickle.load(f)
 
-    val_provider=FramedDataProvider(train_sample_length=-1,shift_low=0,shift_high=0,num_workers=8,average_samples_per_song=1,need_shuffle=False)
-    val_provider.link(storage_x,CQTPitchShifter(SPEC_DIM,SHIFT_LOW,SHIFT_HIGH),subrange=val_indices)
-    val_provider.link(storage_y,ComplexChordShifter(),subrange=val_indices)
+    train_provider = FramedDataProvider(
+        train_sample_length=LSTM_TRAIN_LENGTH,
+        shift_low=SHIFT_LOW,
+        shift_high=SHIFT_HIGH,
+        num_workers=args.num_workers,
+        average_samples_per_song=1,
+    )
+    train_provider.link(storage_x, CQTPitchShifter(SPEC_DIM, SHIFT_LOW, SHIFT_HIGH), subrange=train_indices)
+    train_provider.link(storage_y, ComplexChordShifter(), subrange=train_indices)
 
+    val_provider = FramedDataProvider(
+        train_sample_length=-1,
+        shift_low=0,
+        shift_high=0,
+        num_workers=args.num_workers,
+        average_samples_per_song=1,
+        need_shuffle=False,
+    )
+    val_provider.link(storage_x, CQTPitchShifter(SPEC_DIM, SHIFT_LOW, SHIFT_HIGH), subrange=val_indices)
+    val_provider.link(storage_y, ComplexChordShifter(), subrange=val_indices)
 
+    save_name = args.save_name or ('chordformer_head16(%.1f,%.1f)_s%d' % (args.power, args.max_clip, slice_id))
+    print(f"Training {save_name} with ReweightedLoss(power={args.power}, max_clip={args.max_clip})...")
 
-    trainer=NetworkInterface(ChordNet(cross_subpart_counter,triad_only=False),
-                             'chordformer_head16(1.0,1.0)_s%d'%slice_id,load_checkpoint=True)
+    net = ChordNet(cross_subpart_counter, triad_only=False, power=args.power, max_clip=args.max_clip)
+    trainer = NetworkInterface(net, save_name, load_checkpoint=True)
     print(trainer)
-    if(slice_id==-1):
-    	trainer.train_supervised(train_provider,val_provider,batch_size=48,
-                             learning_rates_dict={1e-3:28,1e-4:15,1e-5:10,1e-6:5},round_per_print=10,round_per_save=500,
-                             round_per_val=-1,early_end_epochs=5,val_batch_size=1)
-    else:
-    	trainer.train_supervised(train_provider,val_provider,batch_size=48,
-                                 learning_rates_dict={1e-3:28,1e-4:15,1e-5:10,1e-6:5},round_per_print=10,round_per_save=500,
-                                 round_per_val=-1,early_end_epochs=5,val_batch_size=1)
+
+    trainer.train_supervised(
+        train_provider,
+        val_provider,
+        batch_size=args.batch_size,
+        learning_rates_dict={1e-3: 28, 1e-4: 15, 1e-5: 10, 1e-6: 5},
+        round_per_print=10,
+        round_per_save=500,
+        round_per_val=-1,
+        early_end_epochs=5,
+        val_batch_size=args.val_batch_size,
+        val_metric=args.val_metric,
+    )
     

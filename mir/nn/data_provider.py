@@ -105,3 +105,38 @@ class FramedDataProvider(DataProvider):
                     storage.locate(valid_indices[raw_id],sample_id,self.train_sample_length),shift+self.shift_low))
                 for (storage,valid_indices,pitch_shifter) in self.storage
             ]
+
+
+class MixedReplayDataProvider(DataProvider):
+    """
+    Combines a primary dataset (e.g. real music) and a replay dataset
+    (e.g. synthetic music with rare chords) at a specified replay_ratio.
+    When replay_ratio=0.2, approximately 20% of samples are drawn from
+    the replay provider and 80% from the primary provider.
+    """
+    def __init__(self, primary_provider, replay_provider, replay_ratio=0.2, need_shuffle=True):
+        super(MixedReplayDataProvider, self).__init__(need_shuffle, primary_provider.collate_fn)
+        self.primary_provider = primary_provider
+        self.replay_provider = replay_provider
+        self.replay_ratio = float(replay_ratio)
+        self.num_workers = max(primary_provider.num_workers, replay_provider.num_workers)
+
+    def init_worker(self, worker_id, is_training_set):
+        self.primary_provider.init_worker(worker_id, is_training_set)
+        self.replay_provider.init_worker(worker_id, is_training_set)
+
+    def get_length(self):
+        if self.replay_ratio >= 1.0:
+            return len(self.replay_provider)
+        if self.replay_ratio <= 0.0:
+            return len(self.primary_provider)
+        return int(np.ceil(len(self.primary_provider) / (1.0 - self.replay_ratio)))
+
+    def get_sample(self, id):
+        if self.replay_ratio > 0.0 and np.random.rand() < self.replay_ratio:
+            replay_idx = np.random.randint(0, len(self.replay_provider))
+            return self.replay_provider.get_sample(replay_idx)
+        else:
+            primary_idx = id % len(self.primary_provider)
+            return self.primary_provider.get_sample(primary_idx)
+

@@ -67,6 +67,7 @@ class NetworkInterface:
         self.optimizer=self.net.get_optimizer()
         self.counter=0
         self.best_val_loss=np.inf
+        self.best_val_score=-np.inf
         self.best_epoch_dist=0
         if(os.path.exists(save_path)):
             state_dict=torch.load(save_path,map_location='cuda' if self.net.use_gpu else 'cpu')
@@ -82,6 +83,7 @@ class NetworkInterface:
             try:
                 self.best_epoch_dist=state_dict['best_epoch_dist']
                 self.best_val_loss=state_dict['best_val_loss']
+                self.best_val_score=state_dict.get('best_val_score', -np.inf)
             except:
                 pass
             self.finalized=True
@@ -99,12 +101,14 @@ class NetworkInterface:
             try:
                 self.best_epoch_dist=state_dict['best_epoch_dist']
                 self.best_val_loss=state_dict['best_val_loss']
+                self.best_val_score=state_dict.get('best_val_score', -np.inf)
             except:
                 pass
 
     def train_supervised(self, train_set, val_set, batch_size, val_batch_size=None, eval_set=None,
                          learning_rates_dict=1e-3, round_per_print=20, learning_rate_decay=0.0,
-                         round_per_val=100, round_per_save=500, early_end_epochs=10):
+                         round_per_val=100, round_per_save=500, early_end_epochs=10,
+                         val_metric='loss'):
         if(self.finalized):
             print('Model is already finalized. To perform new training, delete the save file.')
             return
@@ -156,7 +160,7 @@ class NetworkInterface:
                 current_counter+=del_count
             if(i<batch_count):
                 for param_group in self.optimizer.param_groups:
-                    param_group['lr']=learning_rate
+                    param_group['lr']=learning_rate * param_group.get('lr_scale', 1.0)
                     param_group['lr_decay']=learning_rate_decay
                 running_loss=np.array([0.0])
                 running_loss_count=0
@@ -257,6 +261,8 @@ class NetworkInterface:
                         val_set_iter=iter(val_set_loader)
                         j=0
                         val_loss=0.0
+                        has_eval = hasattr(self.net, 'evaluate_batch')
+                        total_cm = [None] * 6 if has_eval else None
                         while True:
                             try:
                                 val_input_tuple=next(val_set_iter)
@@ -272,36 +278,90 @@ class NetworkInterface:
                                     val_loss=val_loss+np.sum([x.item() for x in raw_val_loss])
                                 else:
                                     val_loss=val_loss+raw_val_loss.item()
+                                if has_eval:
+                                    batch_cm = self.net.evaluate_batch(*val_input_tuple)
+                                    for h in range(6):
+                                        if total_cm[h] is None:
+                                            total_cm[h] = batch_cm[h]
+                                        else:
+                                            total_cm[h] += batch_cm[h]
                             self.net.train()
                             if(j%(round_per_print*batch_count//val_batch_size)==0):
                                 print('Validation: %d/%d'%(j,len(val_set_loader)),flush=True)
                             j+=1
                         mean_val_loss=val_loss/j
-                        print('[%f, %.2f%% (%d/%d)] val_loss: %.6f best_val_loss: %.6f (%d epochs away)' %
+
+                        head_macro_accs = []
+                        macro_score = 0.0
+                        if has_eval and total_cm[0] is not None:
+                            head_names = ['R/T', 'Bass', '7th', '9th', '11th', '13th']
+                            macro_str_parts = []
+                            for h in range(6):
+                                supp = total_cm[h].sum(axis=1)
+                                valid_c = supp > 0
+                                if valid_c.sum() > 0:
+                                    rec = total_cm[h].diagonal()[valid_c] / supp[valid_c]
+                                    m_acc = float(rec.mean())
+                                else:
+                                    m_acc = 0.0
+                                head_macro_accs.append(m_acc)
+                                macro_str_parts.append(f'{head_names[h]}: {m_acc*100:.1f}%')
+                            overall_macro = float(np.mean(head_macro_accs))
+                            ext_macro = float(np.mean(head_macro_accs[2:]))
+                            macro_score = overall_macro
+                            composite_score = macro_score - 0.1 * mean_val_loss
+                            macro_summary = f" | Macro: {' '.join(macro_str_parts)} (Ext: {ext_macro*100:.1f}%, All: {overall_macro*100:.1f}%)"
+                        else:
+                            macro_summary = ""
+                            overall_macro = 0.0
+                            ext_macro = 0.0
+                            composite_score = -mean_val_loss
+
+                        score_str = f" best_val_score: {self.best_val_score:.4f}" if (val_metric in ['macro', 'composite'] and self.best_val_score != -np.inf) else ""
+                        print('[%f, %.2f%% (%d/%d)] val_loss: %.6f best_val_loss: %.6f%s%s (%d epochs away)' %
                               (learning_rate,(i+1)/batch_count*100,i+1,batch_count,
-                               mean_val_loss,self.best_val_loss,self.best_epoch_dist),flush=True)
+                               mean_val_loss,self.best_val_loss,score_str,macro_summary,self.best_epoch_dist),flush=True)
 
                         if(self.net.use_gpu):
                             self.net.cpu()
-                        if(mean_val_loss<self.best_val_loss):
-                            self.best_val_loss=mean_val_loss
-                            self.best_epoch_dist=0
-                            torch.save({'loss':mean_val_loss,
-                                        'learning_rate':learning_rate,
-                                        'step':i,
-                                        'batch_count':batch_count,
-                                        'net':self.net.state_dict(),
-                                        'opt':self.optimizer.state_dict(),
-                                        'counter':current_counter+1
-                                        },os.path.join(WORKING_PATH,'cache_data/%s.best.sdict'%self.save_name))
+
+                        if val_metric == 'macro' and has_eval:
+                            improved = macro_score > self.best_val_score
+                        elif val_metric == 'composite' and has_eval:
+                            improved = composite_score > self.best_val_score
                         else:
-                            self.best_epoch_dist+=1
-                        torch.save({'best_val_loss':self.best_val_loss,
-                                    'best_epoch_dist':self.best_epoch_dist,
-                                    'net':self.net.state_dict(),
-                                    'opt':self.optimizer.state_dict(),
-                                    'counter':current_counter+1
-                                    },os.path.join(WORKING_PATH,'cache_data/%s.cp.sdict'%self.save_name))
+                            improved = mean_val_loss < self.best_val_loss
+
+                        if improved:
+                            if val_metric == 'macro':
+                                self.best_val_score = macro_score
+                            elif val_metric == 'composite':
+                                self.best_val_score = composite_score
+                            self.best_val_loss = mean_val_loss
+                            self.best_epoch_dist = 0
+                            save_dict = {
+                                'loss': mean_val_loss,
+                                'val_metric': val_metric,
+                                'macro_score': macro_score,
+                                'head_macro_accs': head_macro_accs,
+                                'learning_rate': learning_rate,
+                                'step': i,
+                                'batch_count': batch_count,
+                                'net': self.net.state_dict(),
+                                'opt': self.optimizer.state_dict(),
+                                'counter': current_counter + 1,
+                            }
+                            torch.save(save_dict, os.path.join(WORKING_PATH, 'cache_data/%s.best.sdict' % self.save_name))
+                        else:
+                            self.best_epoch_dist += 1
+                        torch.save({
+                            'best_val_loss': self.best_val_loss,
+                            'best_val_score': self.best_val_score,
+                            'best_epoch_dist': self.best_epoch_dist,
+                            'net': self.net.state_dict(),
+                            'opt': self.optimizer.state_dict(),
+                            'counter': current_counter + 1
+                        }, os.path.join(WORKING_PATH, 'cache_data/%s.cp.sdict' % self.save_name))
                         if(self.net.use_gpu):
                             self.net.cuda()
                         print('[%f, %.2f%% (%d/%d)] checkpoint created' %
