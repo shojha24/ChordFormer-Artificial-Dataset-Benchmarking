@@ -79,7 +79,11 @@ class NetworkInterface:
             # self.net.load_state_dict(new_state_dict)
             self.net.load_state_dict(state_dict['net'])
             self.counter=state_dict['counter']
-            self.optimizer.load_state_dict(state_dict['opt'])
+            try:
+                if 'opt' in state_dict and self.optimizer is not None:
+                    self.optimizer.load_state_dict(state_dict['opt'])
+            except Exception as e:
+                pass
             try:
                 self.best_epoch_dist=state_dict['best_epoch_dist']
                 self.best_val_loss=state_dict['best_val_loss']
@@ -97,7 +101,11 @@ class NetworkInterface:
             # self.net.load_state_dict(new_state_dict)
             self.net.load_state_dict(state_dict['net'])
             self.counter=state_dict['counter']
-            self.optimizer.load_state_dict(state_dict['opt'])
+            try:
+                if 'opt' in state_dict and self.optimizer is not None:
+                    self.optimizer.load_state_dict(state_dict['opt'])
+            except Exception as e:
+                pass
             try:
                 self.best_epoch_dist=state_dict['best_epoch_dist']
                 self.best_val_loss=state_dict['best_val_loss']

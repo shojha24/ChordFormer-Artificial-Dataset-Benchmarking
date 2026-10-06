@@ -316,7 +316,7 @@ if __name__ == '__main__':
     parser.add_argument('--lab_dir', type=str, default='output/output_chordformer_head16(1.0,1.0)_s%d.best_hmm_full/jam/', help='Directory containing .lab files')
     parser.add_argument('--model_pattern', type=str, default='chordformer_head16(1.0,1.0)_s%d.best', help='Model checkpoint pattern (e.g. chordformer_head16_synth_ft_s%d.best)')
     parser.add_argument('--max_songs', type=int, default=None, help='Limit number of test songs (default: all 1217)')
-    parser.add_argument('--penalty', type=float, default=2.0, help='CRF transition penalty (default 2.0 based on Eq. 12)')
+    parser.add_argument('--penalty', '--crf_penalty', type=float, default=2.0, dest='penalty', help='CRF transition penalty (default 2.0 based on Eq. 12)')
     parser.add_argument('--no_crf', action='store_true', help='Disable CRF decoding and use raw argmax')
     parser.add_argument('--save_path', type=str, default=None, help='Custom output text file path')
     args = parser.parse_args()

@@ -171,7 +171,7 @@ Calculates macro gain, head frame accuracy, and rare alteration recall gains aga
 python evaluate_synth_vs_baseline.py \
   --baseline eval_heads_report.txt \
   --synth eval_heads_synth_ft_report.txt \
-  --out comparison_summary.txt
+  --out eval_comparison_summary.txt
 ```
 
 ---
