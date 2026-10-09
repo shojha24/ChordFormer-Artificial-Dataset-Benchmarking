@@ -52,7 +52,7 @@ chord_limit=ChordTypeLimit(
 
 class ReweightedLoss(nn.Module):
 
-    def __init__(self,counter=None,power=0.5,max_clip=10.0,gpu=False,triad_only=False):
+    def __init__(self,counter=None,power=0.5,max_clip=10.0,min_clip=None,b7_clamp=True,gpu=False,triad_only=False):
         super(ReweightedLoss, self).__init__()
         self.weight=[None]*6
         if(counter is not None):
@@ -64,8 +64,19 @@ class ReweightedLoss(nn.Module):
                 raw_ratio = self.weight[i].max() / self.weight[i].clamp(min=1.0)
                 self.weight[i]=torch.pow(raw_ratio,power)
                 self.weight[i][self.weight[i]>max_clip]=max_clip
-                if(gpu==True):
-                    self.weight[i]=self.weight[i].cuda()
+                if(min_clip is not None):
+                    self.weight[i][self.weight[i]<min_clip]=min_clip
+            # b7 clamp: Head 3 (7th extension, index 2 in weight list)
+            # In Head 3: index 0=N, index 1=7, index 2=b7, index 3=bb7.
+            # Avoid severe underweighting of b7 relative to 7 and bb7 by clamping b7 weight.
+            if(b7_clamp and self.weight[2] is not None and len(self.weight[2]) > 2):
+                b7_floor = max(self.weight[2][1].item() * 0.8, 3.5)
+                if self.weight[2][2] < b7_floor:
+                    self.weight[2][2] = b7_floor
+            if(gpu==True):
+                for i in range(6):
+                    if self.weight[i] is not None:
+                        self.weight[i]=self.weight[i].cuda()
         self.triad_only=triad_only
 
 
@@ -420,7 +431,7 @@ class ChordConformer(torch.nn.Module):
 class ChordNet(NetworkBehavior):
 
     def __init__(self,cross_subpart_counter,triad_only=False,chord_limit=chord_limit,
-                 power=0.5,max_clip=10.0,discriminative_lr=False,lr_scales=None):
+                 power=0.5,max_clip=10.0,min_clip=None,b7_clamp=True,discriminative_lr=False,lr_scales=None):
         super(ChordNet, self).__init__()
         self.triad_only=triad_only
         self.chord_limit=chord_limit
@@ -438,7 +449,7 @@ class ChordNet(NetworkBehavior):
         self.final_fc1=nn.Linear(self.hidden_dim1,self.output_dim1+self.output_dim2)
 
         #self.loss_calc=FocalLoss(gamma=2.0)
-        self.loss_reweight=ReweightedLoss(cross_subpart_counter,power=power,max_clip=max_clip,gpu=self.use_gpu,triad_only=triad_only)
+        self.loss_reweight=ReweightedLoss(cross_subpart_counter,power=power,max_clip=max_clip,min_clip=min_clip,b7_clamp=b7_clamp,gpu=self.use_gpu,triad_only=triad_only)
 
     def get_optimizer(self):
         if not self.discriminative_lr:
@@ -623,6 +634,8 @@ if __name__ == '__main__':
     parser.add_argument('slice_id', type=int, help='Slice / Fold ID (0..4, or -1 for all folds)')
     parser.add_argument('--power', type=float, default=0.5, help='ReweightedLoss power exponent (default: 0.5)')
     parser.add_argument('--max_clip', type=float, default=10.0, help='ReweightedLoss max_clip limit (default: 10.0)')
+    parser.add_argument('--min_clip', type=float, default=None, help='ReweightedLoss min_clip floor (default: None)')
+    parser.add_argument('--no_b7_clamp', action='store_true', help='Disable b7 weight clamp on 7th extension head')
     parser.add_argument('--save_name', type=str, default=None, help='Model save name')
     parser.add_argument('--batch_size', type=int, default=48, help='Batch size (default: 48)')
     parser.add_argument('--val_batch_size', type=int, default=1, help='Validation batch size (default: 1)')
@@ -676,7 +689,14 @@ if __name__ == '__main__':
     save_name = args.save_name or ('chordformer_head16(%.1f,%.1f)_s%d' % (args.power, args.max_clip, slice_id))
     print(f"Training {save_name} with ReweightedLoss(power={args.power}, max_clip={args.max_clip})...")
 
-    net = ChordNet(cross_subpart_counter, triad_only=False, power=args.power, max_clip=args.max_clip)
+    net = ChordNet(
+        cross_subpart_counter,
+        triad_only=False,
+        power=args.power,
+        max_clip=args.max_clip,
+        min_clip=args.min_clip,
+        b7_clamp=not args.no_b7_clamp,
+    )
     trainer = NetworkInterface(net, save_name, load_checkpoint=True)
     print(trainer)
 

@@ -32,6 +32,8 @@ def finetune_fold(
     early_end_epochs=5,
     replay_ratio=0.2,
     loss_max_clip=10.0,
+    loss_min_clip=None,
+    loss_b7_clamp=True,
     loss_power=0.5,
     discriminative_lr=True,
     val_metric='macro',
@@ -132,6 +134,8 @@ def finetune_fold(
         triad_only=False,
         power=loss_power,
         max_clip=loss_max_clip,
+        min_clip=loss_min_clip,
+        b7_clamp=loss_b7_clamp,
         discriminative_lr=discriminative_lr,
     )
 
@@ -181,6 +185,8 @@ if __name__ == '__main__':
     parser.add_argument('--num_workers', type=int, default=8, help='Worker threads (default: 8)')
     parser.add_argument('--replay_ratio', type=float, default=0.2, help='Synthetic replay ratio (default: 0.2)')
     parser.add_argument('--loss_max_clip', type=float, default=10.0, help='Max class weight clip in ReweightedLoss (default: 10.0)')
+    parser.add_argument('--loss_min_clip', type=float, default=None, help='Min class weight clip in ReweightedLoss (default: None)')
+    parser.add_argument('--no_b7_clamp', action='store_true', help='Disable b7 weight clamp on 7th extension head')
     parser.add_argument('--loss_power', type=float, default=0.5, help='Power exponent in ReweightedLoss (default: 0.5)')
     parser.add_argument('--no_discriminative_lr', action='store_true', help='Disable discriminative learning rates')
     parser.add_argument('--val_metric', type=str, default='macro', choices=['macro', 'loss', 'composite'], help='Validation checkpoint selection metric (default: macro)')
@@ -207,6 +213,8 @@ if __name__ == '__main__':
             load_checkpoint=not args.no_load_checkpoint,
             replay_ratio=args.replay_ratio,
             loss_max_clip=args.loss_max_clip,
+            loss_min_clip=args.loss_min_clip,
+            loss_b7_clamp=not args.no_b7_clamp,
             loss_power=args.loss_power,
             discriminative_lr=not args.no_discriminative_lr,
             val_metric=args.val_metric,
