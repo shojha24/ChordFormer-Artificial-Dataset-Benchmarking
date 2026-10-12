@@ -22,14 +22,28 @@ def pretrain_synthetic(
     num_workers=8,
     save_name='chordformer_head16_synth_pretrain',
     learning_rates_dict=None,
-    total_songs=5000,
-    val_count=500,
+    total_songs=None,
+    val_count=None,
     seed=42,
     load_checkpoint=True,
     early_end_epochs=5,
 ):
+    storage_x = FramedH5DataStorage('synth_naturalistic_cqt')
+    storage_y = FramedH5DataStorage('synth_naturalistic_xchord')
+    storage_x.load_meta()
+    storage_y.load_meta()
+
+    if total_songs is None or total_songs <= 0:
+        total_songs = storage_x.total_song_count
+    if val_count is None or val_count <= 0:
+        val_count = max(500, int(total_songs * 0.1))
+
     if learning_rates_dict is None:
-        learning_rates_dict = {1e-3: 15, 1e-4: 10, 1e-5: 5}
+        # Scaled schedule: ~11,000-12,000 mini-batches for 10k corpus (or ~7,500 for 5k)
+        if total_songs >= 8000:
+            learning_rates_dict = {1e-3: 20, 1e-4: 15, 1e-5: 8}
+        else:
+            learning_rates_dict = {1e-3: 15, 1e-4: 10, 1e-5: 5}
 
     print(f"=== Stage 1: Synthetic Pretraining ({save_name}) ===")
     print(f"Total songs: {total_songs} (Train: {total_songs - val_count}, Val: {val_count})")
@@ -38,11 +52,6 @@ def pretrain_synthetic(
     indices = np.random.RandomState(seed).permutation(total_songs)
     train_indices = indices[:-val_count]
     val_indices = indices[-val_count:]
-
-    storage_x = FramedH5DataStorage('synth_naturalistic_cqt')
-    storage_y = FramedH5DataStorage('synth_naturalistic_xchord')
-    storage_x.load_meta()
-    storage_y.load_meta()
 
     print(f"Loaded storage: {storage_x.total_song_count} songs in synth_naturalistic_cqt")
 
@@ -105,9 +114,11 @@ if __name__ == '__main__':
     parser.add_argument('--save_name', type=str, default='chordformer_head16_synth_pretrain', help='Model save name')
     parser.add_argument('--no_load_checkpoint', action='store_true', help='Do not resume from existing checkpoint')
     parser.add_argument('--quick_test', action='store_true', help='Run a quick 1-epoch test')
+    parser.add_argument('--total_songs', type=int, default=None, help='Total songs in synthetic dataset (default: auto-detect)')
+    parser.add_argument('--val_count', type=int, default=None, help='Held-out validation songs count (default: 10%)')
     args = parser.parse_args()
 
-    lr_schedule = {1e-3: 1, 1e-4: 1} if args.quick_test else {1e-3: 15, 1e-4: 10, 1e-5: 5}
+    lr_schedule = {1e-3: 1, 1e-4: 1} if args.quick_test else None
 
     pretrain_synthetic(
         batch_size=args.batch_size,
@@ -115,5 +126,7 @@ if __name__ == '__main__':
         num_workers=args.num_workers,
         save_name=args.save_name,
         learning_rates_dict=lr_schedule,
+        total_songs=args.total_songs,
+        val_count=args.val_count,
         load_checkpoint=not args.no_load_checkpoint,
     )

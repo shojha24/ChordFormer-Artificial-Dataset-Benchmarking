@@ -86,9 +86,10 @@ def finetune_fold(
         synth_y.load_meta()
 
         synth_total = synth_x.total_song_count
-        # Exclude held-out validation songs from synthetic pretraining if available
-        if synth_total >= 5000:
-            synth_indices = np.random.RandomState(42).permutation(synth_total)[:-500]
+        # Exclude held-out validation songs from synthetic pretraining if available (10% or min 500)
+        if synth_total >= 1000:
+            val_cut = max(500, int(synth_total * 0.1))
+            synth_indices = np.random.RandomState(42).permutation(synth_total)[:-val_cut]
         else:
             synth_indices = np.arange(synth_total)
 

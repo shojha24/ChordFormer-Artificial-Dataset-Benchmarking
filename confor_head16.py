@@ -437,9 +437,9 @@ class ChordNet(NetworkBehavior):
         self.chord_limit=chord_limit
         self.discriminative_lr=discriminative_lr
         self.lr_scales=lr_scales or {
-            'bottom_layers': 1.0,
+            'bottom_layers': 0.2,
             'top_layers': 0.5,
-            'head': 0.1,
+            'head': 1.0,
         }
 
         self.hidden_dim1=192
@@ -470,7 +470,7 @@ class ChordNet(NetworkBehavior):
         param_groups = [
             {
                 'params': [p for p in bottom_params if p.requires_grad],
-                'lr_scale': self.lr_scales.get('bottom_layers', 1.0),
+                'lr_scale': self.lr_scales.get('bottom_layers', 0.2),
                 'name': 'bottom_conformer'
             },
             {
@@ -480,7 +480,7 @@ class ChordNet(NetworkBehavior):
             },
             {
                 'params': [p for p in head_params if p.requires_grad],
-                'lr_scale': self.lr_scales.get('head', 0.1),
+                'lr_scale': self.lr_scales.get('head', 1.0),
                 'name': 'classification_head'
             },
         ]
