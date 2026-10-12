@@ -167,6 +167,8 @@ class NetworkInterface:
                 i+=del_count
                 current_counter+=del_count
             if(i<batch_count):
+                if hasattr(train_set, 'on_learning_rate_change'):
+                    train_set.on_learning_rate_change(learning_rate)
                 for param_group in self.optimizer.param_groups:
                     param_group['lr']=learning_rate * param_group.get('lr_scale', 1.0)
                     param_group['lr_decay']=learning_rate_decay

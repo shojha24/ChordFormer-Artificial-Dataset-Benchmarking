@@ -31,6 +31,7 @@ def finetune_fold(
     load_checkpoint=True,
     early_end_epochs=5,
     replay_ratio=0.2,
+    anneal_replay=True,
     loss_max_clip=10.0,
     loss_min_clip=None,
     loss_b7_clamp=True,
@@ -45,7 +46,7 @@ def finetune_fold(
     print(f"\n=== Stage 2: Fine-Tuning Real Fold {slice_id} ({save_name}) ===")
     print(f"Pretrained weights: {pretrained_path}")
     print(f"LR schedule: {learning_rates_dict}, Batch size: {batch_size}")
-    print(f"Replay ratio: {replay_ratio*100:.1f}%, Discriminative LR: {discriminative_lr}")
+    print(f"Replay ratio: {replay_ratio*100:.1f}% (annealed: {anneal_replay}), Discriminative LR: {discriminative_lr}")
     print(f"Loss reweighting: power={loss_power}, max_clip={loss_max_clip}, Val metric: {val_metric}")
 
     weight_path = f'data/cross_subpart_weight{slice_id}.pkl'
@@ -110,6 +111,7 @@ def finetune_fold(
             primary_provider=real_train_provider,
             replay_provider=synth_train_provider,
             replay_ratio=replay_ratio,
+            anneal_replay=anneal_replay,
         )
     else:
         if replay_ratio > 0.0:
@@ -192,6 +194,7 @@ if __name__ == '__main__':
     parser.add_argument('--no_discriminative_lr', action='store_true', help='Disable discriminative learning rates')
     parser.add_argument('--val_metric', type=str, default='macro', choices=['macro', 'loss', 'composite'], help='Validation checkpoint selection metric (default: macro)')
     parser.add_argument('--no_load_checkpoint', action='store_true', help='Do not resume from existing checkpoint')
+    parser.add_argument('--no_anneal_replay', action='store_true', help='Disable replay ratio annealing across LR schedule')
     parser.add_argument('--quick_test', action='store_true', help='Run a quick 1-epoch test per fold')
     args = parser.parse_args()
 
@@ -213,6 +216,7 @@ if __name__ == '__main__':
             learning_rates_dict=lr_schedule,
             load_checkpoint=not args.no_load_checkpoint,
             replay_ratio=args.replay_ratio,
+            anneal_replay=not args.no_anneal_replay,
             loss_max_clip=args.loss_max_clip,
             loss_min_clip=args.loss_min_clip,
             loss_b7_clamp=not args.no_b7_clamp,

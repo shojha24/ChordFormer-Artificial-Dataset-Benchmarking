@@ -113,13 +113,31 @@ class MixedReplayDataProvider(DataProvider):
     (e.g. synthetic music with rare chords) at a specified replay_ratio.
     When replay_ratio=0.2, approximately 20% of samples are drawn from
     the replay provider and 80% from the primary provider.
+    Supports replay annealing: if anneal_replay=True, decays the replay ratio
+    on low learning rates to calibrate model priors to natural audio.
     """
-    def __init__(self, primary_provider, replay_provider, replay_ratio=0.2, need_shuffle=True):
+    def __init__(self, primary_provider, replay_provider, replay_ratio=0.2, anneal_replay=True, need_shuffle=True):
         super(MixedReplayDataProvider, self).__init__(need_shuffle, primary_provider.collate_fn)
         self.primary_provider = primary_provider
         self.replay_provider = replay_provider
+        self.base_replay_ratio = float(replay_ratio)
         self.replay_ratio = float(replay_ratio)
+        self.anneal_replay = anneal_replay
         self.num_workers = max(primary_provider.num_workers, replay_provider.num_workers)
+
+    def on_learning_rate_change(self, lr):
+        if not self.anneal_replay or self.base_replay_ratio <= 0.0:
+            return
+        # High LR (>= 1e-4): full replay ratio to maintain rare chord features
+        # Mid LR (1e-5): half replay ratio
+        # Low LR (<= 1e-6): 0% replay (100% natural data) to calibrate output priors
+        if lr >= 1e-4:
+            self.replay_ratio = self.base_replay_ratio
+        elif lr >= 1e-5:
+            self.replay_ratio = self.base_replay_ratio * 0.5
+        else:
+            self.replay_ratio = 0.0
+        print(f"[MixedReplayDataProvider] Annealed synthetic replay ratio to {self.replay_ratio*100:.1f}% for lr={lr:g}", flush=True)
 
     def init_worker(self, worker_id, is_training_set):
         self.primary_provider.init_worker(worker_id, is_training_set)

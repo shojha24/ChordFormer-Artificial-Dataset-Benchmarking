@@ -59,12 +59,52 @@ def viterbi_decode_crf(probs: np.ndarray, penalty: float = 2.0, device: torch.de
 
     return decoded.cpu().numpy()
 
-def evaluate_heads(model_pattern='chordformer_head16(1.0,1.0)_s%d.best', max_songs=None, crf_penalty=2.0, save_path=None):
+def compute_class_log_priors(weight_pkl_path='data/cross_subpart_weight0.pkl'):
+    """
+    Computes empirical class log-priors log(pi_k) from training data distributions.
+    Used for Post-Hoc Logit Adjustment (Menon et al., ICLR 2021) at inference time:
+    z'_k = z_k + tau * log(pi_k), which penalizes false positives on rare extensions
+    without degrading the learned feature representations.
+    """
+    import pickle
+    if not os.path.exists(weight_pkl_path):
+        print(f"Warning: {weight_pkl_path} not found. Logit adjustment disabled.")
+        return None
+    with open(weight_pkl_path, 'rb') as f:
+        w = pickle.load(f)
+
+    # Head 0: 97 classes (1 N + 8 * 12 triad types)
+    head0_counts = np.zeros(97, dtype=np.float64)
+    head0_counts[0] = w[0][0]
+    for t in range(1, 9):
+        head0_counts[(t - 1) * 12 + 1 : t * 12 + 1] = w[0][t] / 12.0
+    p0 = head0_counts / head0_counts.sum()
+
+    # Head 1: 13 classes (0=N, 1..12 = C..B)
+    head1_counts = np.zeros(13, dtype=np.float64)
+    head1_counts[0] = w[1][0]
+    head1_counts[1:] = w[1][1] / 12.0
+    p1 = head1_counts / head1_counts.sum()
+
+    # Head 2..5: direct extension counts
+    p2 = np.array(w[2], dtype=np.float64) / sum(w[2])
+    p3 = np.array(w[3], dtype=np.float64) / sum(w[3])
+    p4 = np.array(w[4], dtype=np.float64) / sum(w[4])
+    p5 = np.array(w[5], dtype=np.float64) / sum(w[5])
+
+    return [np.log(np.maximum(p, 1e-12)) for p in [p0, p1, p2, p3, p4, p5]]
+
+def evaluate_heads(model_pattern='chordformer_head16(1.0,1.0)_s%d.best', max_songs=None, crf_penalty=2.0, tau=0.35, save_path=None):
     if save_path is None:
-        save_path = f'eval_heads_crf_p{crf_penalty:.1f}_report.txt' if (crf_penalty and crf_penalty > 0) else 'eval_heads_report.txt'
+        tau_str = f"_tau{tau:.2f}" if (tau and tau > 0) else ""
+        save_path = f'eval_heads_crf_p{crf_penalty:.1f}{tau_str}_report.txt' if (crf_penalty and crf_penalty > 0) else f'eval_heads{tau_str}_report.txt'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     mode_str = f"CRF Viterbi Decoding (penalty={crf_penalty})" if (crf_penalty and crf_penalty > 0) else "Raw ArgMax (No CRF)"
+    if tau and tau > 0:
+        mode_str += f" + Logit Adj (tau={tau:.2f})"
     print(f"Evaluating 6 heads on {device} using {mode_str} with model pattern '{model_pattern}' across all 5 cross-validation folds...")
+
+    log_priors = compute_class_log_priors() if (tau and tau > 0) else None
 
     storage_x = FramedH5DataStorage('jams_cqt')
     storage_y = FramedH5DataStorage('jams_xchord')
@@ -108,21 +148,32 @@ def evaluate_heads(model_pattern='chordformer_head16(1.0,1.0)_s%d.best', max_son
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
                 probs = model.inference(cqt)
 
+            # Apply Post-Hoc Logit Adjustment (Menon et al.) if tau > 0
+            if log_priors is not None and tau > 0.0:
+                adjusted_probs = []
+                for h in range(6):
+                    adj_log_p = np.log(np.maximum(probs[h], 1e-12)) + tau * log_priors[h]
+                    adj_p = np.exp(adj_log_p - adj_log_p.max(axis=-1, keepdims=True))
+                    adj_p = adj_p / adj_p.sum(axis=-1, keepdims=True)
+                    adjusted_probs.append(adj_p)
+            else:
+                adjusted_probs = probs
+
             # Decode with CRF if requested, else argmax
             if crf_penalty is not None and crf_penalty > 0:
-                pred_0 = viterbi_decode_crf(probs[0], penalty=crf_penalty, device=device)
-                pred_1 = viterbi_decode_crf(probs[1], penalty=crf_penalty, device=device)
-                pred_2 = viterbi_decode_crf(probs[2], penalty=crf_penalty, device=device)
-                pred_3 = viterbi_decode_crf(probs[3], penalty=crf_penalty, device=device)
-                pred_4 = viterbi_decode_crf(probs[4], penalty=crf_penalty, device=device)
-                pred_5 = viterbi_decode_crf(probs[5], penalty=crf_penalty, device=device)
+                pred_0 = viterbi_decode_crf(adjusted_probs[0], penalty=crf_penalty, device=device)
+                pred_1 = viterbi_decode_crf(adjusted_probs[1], penalty=crf_penalty, device=device)
+                pred_2 = viterbi_decode_crf(adjusted_probs[2], penalty=crf_penalty, device=device)
+                pred_3 = viterbi_decode_crf(adjusted_probs[3], penalty=crf_penalty, device=device)
+                pred_4 = viterbi_decode_crf(adjusted_probs[4], penalty=crf_penalty, device=device)
+                pred_5 = viterbi_decode_crf(adjusted_probs[5], penalty=crf_penalty, device=device)
             else:
-                pred_0 = probs[0].argmax(axis=-1)
-                pred_1 = probs[1].argmax(axis=-1)
-                pred_2 = probs[2].argmax(axis=-1)
-                pred_3 = probs[3].argmax(axis=-1)
-                pred_4 = probs[4].argmax(axis=-1)
-                pred_5 = probs[5].argmax(axis=-1)
+                pred_0 = adjusted_probs[0].argmax(axis=-1)
+                pred_1 = adjusted_probs[1].argmax(axis=-1)
+                pred_2 = adjusted_probs[2].argmax(axis=-1)
+                pred_3 = adjusted_probs[3].argmax(axis=-1)
+                pred_4 = adjusted_probs[4].argmax(axis=-1)
+                pred_5 = adjusted_probs[5].argmax(axis=-1)
 
             target_0 = tag[:, 0]
             target_1 = tag[:, 1] + 1
@@ -314,10 +365,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Multi-head chord evaluation with optional CRF Viterbi decoding")
     parser.add_argument('--from_lab', action='store_true', help='Evaluate directly from generated .lab files without re-running network inference')
     parser.add_argument('--lab_dir', type=str, default='output/output_chordformer_head16(1.0,1.0)_s%d.best_hmm_full/jam/', help='Directory containing .lab files')
-    parser.add_argument('--model_pattern', type=str, default='chordformer_head16(1.0,1.0)_s%d.best', help='Model checkpoint pattern (e.g. chordformer_head16_synth_ft_s%d.best)')
+    parser.add_argument('--model_pattern', type=str, default='chordformer_head16(1.0,1.0)_s%d.best', help='Model checkpoint pattern (e.g. chordformer_head16_synth_ft_s%%d.best)')
     parser.add_argument('--max_songs', type=int, default=None, help='Limit number of test songs (default: all 1217)')
     parser.add_argument('--penalty', '--crf_penalty', type=float, default=2.0, dest='penalty', help='CRF transition penalty (default 2.0 based on Eq. 12)')
     parser.add_argument('--no_crf', action='store_true', help='Disable CRF decoding and use raw argmax')
+    parser.add_argument('--tau', type=float, default=0.35, help='Logit adjustment temperature tau (default 0.35, set 0.0 to disable)')
+    parser.add_argument('--no_logit_adj', action='store_true', help='Disable logit adjustment prior correction (equivalent to --tau 0.0)')
     parser.add_argument('--save_path', type=str, default=None, help='Custom output text file path')
     args = parser.parse_args()
 
@@ -326,4 +379,5 @@ if __name__ == '__main__':
         evaluate_heads_from_lab(lab_dir=args.lab_dir, max_songs=args.max_songs, save_path=save_path)
     else:
         penalty = 0.0 if args.no_crf else args.penalty
-        evaluate_heads(model_pattern=args.model_pattern, max_songs=args.max_songs, crf_penalty=penalty, save_path=args.save_path)
+        tau = 0.0 if args.no_logit_adj else args.tau
+        evaluate_heads(model_pattern=args.model_pattern, max_songs=args.max_songs, crf_penalty=penalty, tau=tau, save_path=args.save_path)
