@@ -26,7 +26,7 @@ def pretrain_synthetic(
     val_count=None,
     seed=42,
     load_checkpoint=True,
-    early_end_epochs=5,
+    early_end_epochs=3,
 ):
     storage_x = FramedH5DataStorage('synth_naturalistic_cqt')
     storage_y = FramedH5DataStorage('synth_naturalistic_xchord')
@@ -36,14 +36,20 @@ def pretrain_synthetic(
     if total_songs is None or total_songs <= 0:
         total_songs = storage_x.total_song_count
     if val_count is None or val_count <= 0:
-        val_count = max(500, int(total_songs * 0.1))
+        # Cap validation holdout at 500 songs (sufficient for stable validation, avoids slow per-epoch eval)
+        val_count = min(500, max(100, int(total_songs * 0.1)))
 
     if learning_rates_dict is None:
-        # Scaled schedule: ~11,000-12,000 mini-batches for 10k corpus (or ~7,500 for 5k)
+        # Schedule accounting for 12 pitch shifts (SHIFT_LOW=-5 to SHIFT_HIGH=6):
+        # 1 epoch = ceil(train_songs * 12 / batch_size)
+        # For 10k corpus (~9,500 train songs @ batch 36): 1 epoch ≈ 3,167 mini-batches.
+        #   3 + 2 + 1 = 6 epochs ≈ 19,000 mini-batches total (~684k audio frames)
+        # For 5k corpus (~4,500 train songs @ batch 36): 1 epoch = 1,500 mini-batches.
+        #   6 + 4 + 2 = 12 epochs = 18,000 mini-batches total
         if total_songs >= 8000:
-            learning_rates_dict = {1e-3: 20, 1e-4: 15, 1e-5: 8}
+            learning_rates_dict = {1e-3: 3, 1e-4: 2, 1e-5: 1}
         else:
-            learning_rates_dict = {1e-3: 15, 1e-4: 10, 1e-5: 5}
+            learning_rates_dict = {1e-3: 6, 1e-4: 4, 1e-5: 2}
 
     print(f"=== Stage 1: Synthetic Pretraining ({save_name}) ===")
     print(f"Total songs: {total_songs} (Train: {total_songs - val_count}, Val: {val_count})")
@@ -115,7 +121,8 @@ if __name__ == '__main__':
     parser.add_argument('--no_load_checkpoint', action='store_true', help='Do not resume from existing checkpoint')
     parser.add_argument('--quick_test', action='store_true', help='Run a quick 1-epoch test')
     parser.add_argument('--total_songs', type=int, default=None, help='Total songs in synthetic dataset (default: auto-detect)')
-    parser.add_argument('--val_count', type=int, default=None, help='Held-out validation songs count (default: 10%)')
+    parser.add_argument('--val_count', type=int, default=None, help='Held-out validation songs count (default: auto min 500 or 10 percent)')
+    parser.add_argument('--early_end_epochs', type=int, default=3, help='Patience epochs before early stopping an LR phase (default: 3)')
     args = parser.parse_args()
 
     lr_schedule = {1e-3: 1, 1e-4: 1} if args.quick_test else None
@@ -128,5 +135,6 @@ if __name__ == '__main__':
         learning_rates_dict=lr_schedule,
         total_songs=args.total_songs,
         val_count=args.val_count,
+        early_end_epochs=args.early_end_epochs,
         load_checkpoint=not args.no_load_checkpoint,
     )
