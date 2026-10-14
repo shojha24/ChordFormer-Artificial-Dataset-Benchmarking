@@ -116,11 +116,12 @@ class MixedReplayDataProvider(DataProvider):
     Supports replay annealing: if anneal_replay=True, decays the replay ratio
     on low learning rates to calibrate model priors to natural audio.
     """
-    def __init__(self, primary_provider, replay_provider, replay_ratio=0.2, anneal_replay=True, need_shuffle=True):
+    def __init__(self, primary_provider, replay_provider, replay_ratio=0.2, replay_floor=0.15, anneal_replay=True, need_shuffle=True):
         super(MixedReplayDataProvider, self).__init__(need_shuffle, primary_provider.collate_fn)
         self.primary_provider = primary_provider
         self.replay_provider = replay_provider
         self.base_replay_ratio = float(replay_ratio)
+        self.replay_floor = float(replay_floor)
         self.replay_ratio = float(replay_ratio)
         self.anneal_replay = anneal_replay
         self.num_workers = max(primary_provider.num_workers, replay_provider.num_workers)
@@ -128,16 +129,17 @@ class MixedReplayDataProvider(DataProvider):
     def on_learning_rate_change(self, lr):
         if not self.anneal_replay or self.base_replay_ratio <= 0.0:
             return
-        # High LR (>= 1e-4): full replay ratio to maintain rare chord features
-        # Mid LR (1e-5): half replay ratio
-        # Low LR (<= 1e-6): 0% replay (100% natural data) to calibrate output priors
+        # Floor curriculum annealing:
+        # High LR (>= 1e-4): base_replay_ratio (e.g. 20% or 25%)
+        # Mid LR (1e-5): midpoint between base and floor (e.g. 17.5%)
+        # Low LR (<= 1e-6): replay_floor (e.g. 15%), NEVER drops to 0%
         if lr >= 1e-4:
             self.replay_ratio = self.base_replay_ratio
         elif lr >= 1e-5:
-            self.replay_ratio = self.base_replay_ratio * 0.5
+            self.replay_ratio = max(self.replay_floor, (self.base_replay_ratio + self.replay_floor) / 2.0)
         else:
-            self.replay_ratio = 0.0
-        print(f"[MixedReplayDataProvider] Annealed synthetic replay ratio to {self.replay_ratio*100:.1f}% for lr={lr:g}", flush=True)
+            self.replay_ratio = self.replay_floor
+        print(f"[MixedReplayDataProvider] Floor curriculum replay ratio set to {self.replay_ratio*100:.1f}% (floor: {self.replay_floor*100:.1f}%) for lr={lr:g}", flush=True)
 
     def init_worker(self, worker_id, is_training_set):
         self.primary_provider.init_worker(worker_id, is_training_set)

@@ -31,6 +31,7 @@ def finetune_fold(
     load_checkpoint=True,
     early_end_epochs=5,
     replay_ratio=0.2,
+    replay_floor=0.15,
     anneal_replay=True,
     loss_max_clip=10.0,
     loss_min_clip=None,
@@ -46,7 +47,7 @@ def finetune_fold(
     print(f"\n=== Stage 2: Fine-Tuning Real Fold {slice_id} ({save_name}) ===")
     print(f"Pretrained weights: {pretrained_path}")
     print(f"LR schedule: {learning_rates_dict}, Batch size: {batch_size}")
-    print(f"Replay ratio: {replay_ratio*100:.1f}% (annealed: {anneal_replay}), Discriminative LR: {discriminative_lr}")
+    print(f"Replay ratio: {replay_ratio*100:.1f}% (floor: {replay_floor*100:.1f}%, annealed: {anneal_replay}), Discriminative LR: {discriminative_lr}")
     print(f"Loss reweighting: power={loss_power}, max_clip={loss_max_clip}, Val metric: {val_metric}")
 
     weight_path = f'data/cross_subpart_weight{slice_id}.pkl'
@@ -111,6 +112,7 @@ def finetune_fold(
             primary_provider=real_train_provider,
             replay_provider=synth_train_provider,
             replay_ratio=replay_ratio,
+            replay_floor=replay_floor,
             anneal_replay=anneal_replay,
         )
     else:
@@ -187,6 +189,7 @@ if __name__ == '__main__':
     parser.add_argument('--val_batch_size', type=int, default=1, help='Validation batch size (default: 1)')
     parser.add_argument('--num_workers', type=int, default=8, help='Worker threads (default: 8)')
     parser.add_argument('--replay_ratio', type=float, default=0.2, help='Synthetic replay ratio (default: 0.2)')
+    parser.add_argument('--replay_floor', type=float, default=0.15, help='Floor synthetic replay ratio under curriculum annealing (default: 0.15)')
     parser.add_argument('--loss_max_clip', type=float, default=10.0, help='Max class weight clip in ReweightedLoss (default: 10.0)')
     parser.add_argument('--loss_min_clip', type=float, default=None, help='Min class weight clip in ReweightedLoss (default: None)')
     parser.add_argument('--no_b7_clamp', action='store_true', help='Disable b7 weight clamp on 7th extension head')
@@ -216,6 +219,7 @@ if __name__ == '__main__':
             learning_rates_dict=lr_schedule,
             load_checkpoint=not args.no_load_checkpoint,
             replay_ratio=args.replay_ratio,
+            replay_floor=args.replay_floor,
             anneal_replay=not args.no_anneal_replay,
             loss_max_clip=args.loss_max_clip,
             loss_min_clip=args.loss_min_clip,

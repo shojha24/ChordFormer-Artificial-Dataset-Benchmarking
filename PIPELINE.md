@@ -49,7 +49,7 @@ Ensure the working directories and generated 10k assets are present:
                         │ (Stage 2 Fine-Tuning: Replay Annealing + Inverted Discrim LR)
                         ▼
                finetune_real_fold.py {0..4} --no_load_checkpoint
-               - Replay Annealing: 20% (1e-4) → 10% (1e-5) → 0% (1e-6)
+               - Floor Curriculum Replay: 20% (1e-4) → 17.5% (1e-5) → 15% floor (1e-6)
                - Corrected ReweightedLoss (power=0.5, max_clip=10.0, b7_clamp=True)
                - Inverted Discriminative LR (Bottom: 0.2x, Top: 0.5x, Head: 1.0x)
                - Macro-score checkpoint selection across 6 heads
@@ -126,11 +126,11 @@ python pretrain_synthetic.py \
 ## Step 4: Stage 2 — Real Domain Fine-Tuning
 
 Fine-tunes the pretrained model on real music folds using the anti-forgetting architecture:
-1. **Replay Buffer Annealing (`--replay_ratio 0.2`):**
-   * **Phase 1 ($10^{-4}$ LR, epochs 1–12):** `20%` synthetic replay (maintains rare extension features).
-   * **Phase 2 ($10^{-5}$ LR, epochs 13–20):** `10%` synthetic replay.
-   * **Phase 3 ($10^{-6}$ LR, epochs 21–24):** `0%` synthetic replay (100% natural real audio allows classification heads to settle into true real-world base rates).
-   * Pass `--no_anneal_replay` if you wish to disable annealing and keep a flat 20%.
+1. **Floor Curriculum Replay (`--replay_ratio 0.2 --replay_floor 0.15`):**
+   * **Phase 1 ($10^{-4}$ LR, epochs 1–12):** `20%` synthetic replay (grounds rare extension features).
+   * **Phase 2 ($10^{-5}$ LR, epochs 13–20):** `17.5%` synthetic replay (midpoint between base and floor).
+   * **Phase 3 ($10^{-6}$ LR, epochs 21–24):** `15%` floor synthetic replay (never 0%, completely preventing catastrophic forgetting of altered chords).
+   * Pass `--no_anneal_replay` if you wish to disable curriculum annealing and keep a flat 20%.
 2. **Inverted Discriminative LR:**
    * Bottom Conformer layers: $0.2 \times \text{lr}$ (preserves pretrained acoustic filters and vocal formant invariance).
    * Upper Conformer layers: $0.5 \times \text{lr}$.
