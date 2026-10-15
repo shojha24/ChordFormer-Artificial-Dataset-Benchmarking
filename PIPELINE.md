@@ -117,8 +117,11 @@ python pretrain_synthetic.py \
   --save_name chordformer_head16_synth_pretrain
 ```
 
-* **Dataset Split:** 9,500 training songs / 500 held-out validation songs (avoids slow per-epoch validation on 1,000 songs).
-* **Calibrated Schedule:** 3 epochs at $10^{-3}$, 2 epochs at $10^{-4}$, 1 epoch at $10^{-5}$ ($\sim 19,000$ mini-batch steps total; each epoch is $\lceil \frac{9,500 \times 12}{36} \rceil \approx 3,167$ mini-batches accounting for the 12 semitone pitch shifts).
+* **Dataset Split:** 9,500 train / 500 val for 10k corpus, or 4,500 train / 500 val for 5k corpus.
+* **Calibrated Schedule (Spec 18):**
+  * **5,000 Songs (Standard):** 4 epochs at $10^{-3}$, 2 epochs at $10^{-4}$, 1 epoch at $10^{-5}$ ($\sim 10,500$ steps total; $\lceil \frac{4,500 \times 12}{36} \rceil = 1,500$ steps/epoch). Prevents synthetic timbre rigidity while delivering full harmonic coverage.
+  * **10,000 Songs:** 3 epochs at $10^{-3}$, 2 epochs at $10^{-4}$, 1 epoch at $10^{-5}$ ($\sim 19,000$ steps total; $\lceil \frac{9,500 \times 12}{36} \rceil \approx 3,167$ steps/epoch).
+  * Fine-grained override flags: `--epochs_1e3`, `--epochs_1e4`, `--epochs_1e5`.
 * **Output Checkpoint:** `cache_data/chordformer_head16_synth_pretrain.best.sdict`.
 
 ---

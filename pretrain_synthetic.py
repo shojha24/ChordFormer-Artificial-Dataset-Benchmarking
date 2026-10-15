@@ -45,11 +45,11 @@ def pretrain_synthetic(
         # For 10k corpus (~9,500 train songs @ batch 36): 1 epoch ≈ 3,167 mini-batches.
         #   3 + 2 + 1 = 6 epochs ≈ 19,000 mini-batches total (~684k audio frames)
         # For 5k corpus (~4,500 train songs @ batch 36): 1 epoch = 1,500 mini-batches.
-        #   6 + 4 + 2 = 12 epochs = 18,000 mini-batches total
+        #   4 + 2 + 1 = 7 epochs ≈ 10,500 mini-batches total (Spec 18: prevents synthetic rigidity)
         if total_songs >= 8000:
             learning_rates_dict = {1e-3: 3, 1e-4: 2, 1e-5: 1}
         else:
-            learning_rates_dict = {1e-3: 6, 1e-4: 4, 1e-5: 2}
+            learning_rates_dict = {1e-3: 4, 1e-4: 2, 1e-5: 1}
 
     print(f"=== Stage 1: Synthetic Pretraining ({save_name}) ===")
     print(f"Total songs: {total_songs} (Train: {total_songs - val_count}, Val: {val_count})")
@@ -123,9 +123,26 @@ if __name__ == '__main__':
     parser.add_argument('--total_songs', type=int, default=None, help='Total songs in synthetic dataset (default: auto-detect)')
     parser.add_argument('--val_count', type=int, default=None, help='Held-out validation songs count (default: auto min 500 or 10 percent)')
     parser.add_argument('--early_end_epochs', type=int, default=3, help='Patience epochs before early stopping an LR phase (default: 3)')
+    parser.add_argument('--epochs_1e3', type=int, default=None, help='Epochs for 1e-3 phase (default: 4 for 5k corpus, 3 for 10k)')
+    parser.add_argument('--epochs_1e4', type=int, default=None, help='Epochs for 1e-4 phase (default: 2)')
+    parser.add_argument('--epochs_1e5', type=int, default=None, help='Epochs for 1e-5 phase (default: 1)')
     args = parser.parse_args()
 
-    lr_schedule = {1e-3: 1, 1e-4: 1} if args.quick_test else None
+    if args.quick_test:
+        lr_schedule = {1e-3: 1, 1e-4: 1}
+    elif any(ep is not None for ep in (args.epochs_1e3, args.epochs_1e4, args.epochs_1e5)):
+        e3 = args.epochs_1e3 if args.epochs_1e3 is not None else 4
+        e4 = args.epochs_1e4 if args.epochs_1e4 is not None else 2
+        e5 = args.epochs_1e5 if args.epochs_1e5 is not None else 1
+        lr_schedule = {}
+        if e3 > 0:
+            lr_schedule[1e-3] = e3
+        if e4 > 0:
+            lr_schedule[1e-4] = e4
+        if e5 > 0:
+            lr_schedule[1e-5] = e5
+    else:
+        lr_schedule = None
 
     pretrain_synthetic(
         batch_size=args.batch_size,
