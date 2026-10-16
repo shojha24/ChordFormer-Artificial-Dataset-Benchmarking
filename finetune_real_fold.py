@@ -182,7 +182,9 @@ def finetune_fold(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Stage 2: Real Domain Fine-Tuning for ChordFormer")
-    parser.add_argument('fold', type=int, nargs='?', default=0, help='Fold ID (0..4, or -1 for all folds)')
+    parser.add_argument('fold', type=str, nargs='?', default='0', help="Fold ID (0..4, or -1 for all folds, or list/range like '3,4', '3-4')")
+    parser.add_argument('--start_fold', type=int, default=None, help='First fold to run when running multiple folds (e.g. --start_fold 3)')
+    parser.add_argument('--skip_folds', type=str, default=None, help="Comma-separated fold indices to skip (e.g. --skip_folds '0,1,2')")
     parser.add_argument('--pretrained_path', type=str, default='cache_data/chordformer_head16_synth_pretrain.best.sdict', help='Pretrained model path')
     parser.add_argument('--save_prefix', type=str, default='chordformer_head16_synth_ft', help='Save name prefix')
     parser.add_argument('--batch_size', type=int, default=36, help='Batch size (default: 36)')
@@ -203,10 +205,25 @@ if __name__ == '__main__':
 
     lr_schedule = {1e-4: 1, 1e-5: 1} if args.quick_test else {1e-4: 12, 1e-5: 8, 1e-6: 4}
 
-    if args.fold == -1:
+    # Parse fold string (supports -1, 3, "3,4", "3-4")
+    fold_str = str(args.fold).strip()
+    if fold_str == '-1':
         folds = list(range(5))
+    elif ',' in fold_str:
+        folds = [int(f.strip()) for f in fold_str.split(',') if f.strip()]
+    elif '-' in fold_str and not fold_str.startswith('-'):
+        start, end = fold_str.split('-')
+        folds = list(range(int(start), int(end) + 1))
     else:
-        folds = [args.fold]
+        folds = [int(fold_str)]
+
+    if args.start_fold is not None:
+        folds = [f for f in folds if f >= args.start_fold]
+    if args.skip_folds is not None:
+        skip_set = {int(x.strip()) for x in args.skip_folds.split(',') if x.strip()}
+        folds = [f for f in folds if f not in skip_set]
+
+    print(f"Target folds to execute: {folds}")
 
     for f in folds:
         finetune_fold(

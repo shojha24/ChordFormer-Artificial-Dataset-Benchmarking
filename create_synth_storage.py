@@ -8,10 +8,17 @@ from extractors.cqt import CQTV2
 from mir.extractors.misc import FrameCount
 from settings import DEFAULT_SR, DEFAULT_HOP_LENGTH, DEFAULT_WIN_SIZE, DEFAULT_CHORD_DICT
 
-DEFAULT_AUDIO_DIR = "/home/shojha/probabilistic-composition-generator/gen/acr-conditions-10k/naturalistic/audio"
+GEN_ROOT = "/home/shojha/probabilistic-composition-generator/gen"
+if os.path.isdir(os.path.join(GEN_ROOT, "acr-conditions-5k")):
+    DEFAULT_AUDIO_DIR = os.path.join(GEN_ROOT, "acr-conditions-5k/naturalistic/audio")
+    DEFAULT_NUM_SONGS = 5000
+else:
+    DEFAULT_AUDIO_DIR = os.path.join(GEN_ROOT, "acr-conditions-10k/naturalistic/audio")
+    DEFAULT_NUM_SONGS = 10000
+
 DEFAULT_LAB_DIR = "/home/shojha/ChordFormer-Artificial-Dataset-Benchmarking/data/synth_naturalistic_lab"
 
-def create_synth_pool(num_songs=10000, audio_dir=DEFAULT_AUDIO_DIR, lab_dir=DEFAULT_LAB_DIR):
+def create_synth_pool(num_songs=DEFAULT_NUM_SONGS, audio_dir=DEFAULT_AUDIO_DIR, lab_dir=DEFAULT_LAB_DIR):
     pool = DataPool('synth_naturalistic')
     pool.set_property('sr', DEFAULT_SR)
     pool.set_property('hop_length', DEFAULT_HOP_LENGTH)
@@ -32,7 +39,7 @@ def create_synth_pool(num_songs=10000, audio_dir=DEFAULT_AUDIO_DIR, lab_dir=DEFA
         entry.append_file(lab_file, ComplexChordIO, 'xchord')
     return pool
 
-def build_storage(num_workers=16, num_songs=10000, audio_dir=DEFAULT_AUDIO_DIR, lab_dir=DEFAULT_LAB_DIR, overwrite=False):
+def build_storage(num_workers=16, num_songs=DEFAULT_NUM_SONGS, audio_dir=DEFAULT_AUDIO_DIR, lab_dir=DEFAULT_LAB_DIR, overwrite=False):
     os.makedirs("cache_data/FrameCount/source=cqt/synth_naturalistic", exist_ok=True)
     os.makedirs("cache_data/CQTV2/synth_naturalistic", exist_ok=True)
     os.makedirs("dataset", exist_ok=True)
@@ -73,7 +80,7 @@ def build_storage(num_workers=16, num_songs=10000, audio_dir=DEFAULT_AUDIO_DIR, 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Extract CQTs and build synthetic HDF5 storage")
-    parser.add_argument('--num_songs', type=int, default=10000, help="Number of songs to index (default: 10000)")
+    parser.add_argument('--num_songs', type=int, default=DEFAULT_NUM_SONGS, help=f"Number of songs to index (default: {DEFAULT_NUM_SONGS})")
     parser.add_argument('--num_workers', type=int, default=16, help="Worker threads for CQT extraction (default: 16)")
     parser.add_argument('--audio_dir', type=str, default=DEFAULT_AUDIO_DIR, help="Audio directory containing song_*/mix.flac")
     parser.add_argument('--lab_dir', type=str, default=DEFAULT_LAB_DIR, help="Directory containing .lab files")

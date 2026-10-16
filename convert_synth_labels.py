@@ -5,9 +5,20 @@ import argparse
 from pathlib import Path
 import complex_chord
 
-DEFAULT_AUDIO_DIR = "/home/shojha/probabilistic-composition-generator/gen/acr-conditions-10k/naturalistic/audio"
-DEFAULT_POP_DIR = "/home/shojha/probabilistic-composition-generator/gen/acr-target-10k/pop-rock-labels"
-DEFAULT_JAZZ_DIR = "/home/shojha/probabilistic-composition-generator/gen/acr-target-10k/jazz-labels"
+GEN_ROOT = "/home/shojha/probabilistic-composition-generator/gen"
+if os.path.isdir(os.path.join(GEN_ROOT, "acr-target-5k")):
+    DEFAULT_AUDIO_DIR = os.path.join(GEN_ROOT, "acr-conditions-5k/naturalistic/audio")
+    DEFAULT_POP_DIR = os.path.join(GEN_ROOT, "acr-target-5k/pop-rock-labels")
+    DEFAULT_JAZZ_DIR = os.path.join(GEN_ROOT, "acr-target-5k/jazz-labels")
+    DEFAULT_TOTAL_SONGS = 5000
+    DEFAULT_POP_COUNT = 3250
+else:
+    DEFAULT_AUDIO_DIR = os.path.join(GEN_ROOT, "acr-conditions-10k/naturalistic/audio")
+    DEFAULT_POP_DIR = os.path.join(GEN_ROOT, "acr-target-10k/pop-rock-labels")
+    DEFAULT_JAZZ_DIR = os.path.join(GEN_ROOT, "acr-target-10k/jazz-labels")
+    DEFAULT_TOTAL_SONGS = 10000
+    DEFAULT_POP_COUNT = 6500
+
 DEFAULT_OUT_LAB_DIR = "/home/shojha/ChordFormer-Artificial-Dataset-Benchmarking/data/synth_naturalistic_lab"
 
 def normalize_harte(label):
@@ -17,7 +28,7 @@ def normalize_harte(label):
     label = re.sub(r'\)\(', ',', label)
     return label
 
-def convert_all(total_songs=10000, pop_count=6500, pop_dir=DEFAULT_POP_DIR, jazz_dir=DEFAULT_JAZZ_DIR, out_dir=DEFAULT_OUT_LAB_DIR):
+def convert_all(total_songs=DEFAULT_TOTAL_SONGS, pop_count=DEFAULT_POP_COUNT, pop_dir=DEFAULT_POP_DIR, jazz_dir=DEFAULT_JAZZ_DIR, out_dir=DEFAULT_OUT_LAB_DIR):
     os.makedirs(out_dir, exist_ok=True)
     converted = 0
     total_chords = 0
@@ -65,8 +76,8 @@ def convert_all(total_songs=10000, pop_count=6500, pop_dir=DEFAULT_POP_DIR, jazz
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Convert synthetic JSON annotations to Harte .lab format")
-    parser.add_argument('--total_songs', type=int, default=10000, help="Total songs (default: 10000)")
-    parser.add_argument('--pop_count', type=int, default=6500, help="Number of pop/rock songs (default: 6500)")
+    parser.add_argument('--total_songs', type=int, default=DEFAULT_TOTAL_SONGS, help=f"Total songs (default: {DEFAULT_TOTAL_SONGS})")
+    parser.add_argument('--pop_count', type=int, default=DEFAULT_POP_COUNT, help=f"Number of pop/rock songs (default: {DEFAULT_POP_COUNT})")
     parser.add_argument('--pop_dir', type=str, default=DEFAULT_POP_DIR, help="Directory containing pop/rock JSONs")
     parser.add_argument('--jazz_dir', type=str, default=DEFAULT_JAZZ_DIR, help="Directory containing jazz JSONs")
     parser.add_argument('--out_dir', type=str, default=DEFAULT_OUT_LAB_DIR, help="Output directory for .lab files")
