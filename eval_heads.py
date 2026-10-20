@@ -1,6 +1,7 @@
 import torch
 import numpy as np
-from sklearn.metrics import classification_report, recall_score, accuracy_score
+from sklearn.metrics import classification_report, recall_score, accuracy_score, confusion_matrix
+import pandas as pd
 import os
 
 from confor_head16 import ChordNet, chord_limit
@@ -12,11 +13,21 @@ from settings import DEFAULT_SR, DEFAULT_HOP_LENGTH
 
 # Human-readable labels for heads
 TRIAD_NAMES = ['N', 'maj', 'min', 'sus4', 'sus2', 'dim', 'aug', '5', '1']
+PITCH_NAMES = ['N', 'C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']
 SEVENTH_NAMES = ['N', '7', 'b7', 'bb7']
 NINTH_NAMES = ['N', '9', '#9', 'b9']
 ELEVENTH_NAMES = ['N', '11', '#11']
 THIRTEENTH_NAMES = ['N', '13', 'b13']
-BASS_NAMES = ['N', 'C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']
+BASS_NAMES = PITCH_NAMES
+
+FULL_97_NAMES = ['N']
+for triad in TRIAD_NAMES[1:]:
+    for pitch in PITCH_NAMES[1:]:
+        FULL_97_NAMES.append(f"{pitch}:{triad}")
+
+pd.set_option('display.max_columns', 30)
+pd.set_option('display.width', 1000)
+pd.set_option('display.max_rows', 120)
 
 try:
     import numba
@@ -139,7 +150,70 @@ def compute_class_log_priors(weight_pkl_path='data/cross_subpart_weight0.pkl'):
 
     return [np.log(np.maximum(p, 1e-12)) for p in [p0, p1, p2, p3, p4, p5]]
 
-def evaluate_heads(model_pattern='chordformer_head16(1.0,1.0)_s%d.best', max_songs=None, crf_penalty=2.0, tau=0.35, save_path=None):
+def format_confusion_matrix(cm, labels, title):
+    lines = []
+    lines.append("=" * 80)
+    lines.append(f"CONFUSION MATRIX: {title}")
+    lines.append("=" * 80)
+
+    # Raw frame counts
+    lines.append("\n[RAW FRAME COUNTS] (Rows = Ground Truth, Columns = Predicted):")
+    df_raw = pd.DataFrame(cm, index=labels, columns=labels)
+    lines.append(df_raw.to_string())
+
+    # Row-normalized recall percentages
+    row_sums = cm.sum(axis=1, keepdims=True)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        cm_norm = np.where(row_sums > 0, cm / row_sums * 100.0, 0.0)
+    df_norm = pd.DataFrame(np.round(cm_norm, 2), index=labels, columns=labels)
+    lines.append("\n[ROW-NORMALIZED RECALL (%)] (Rows = Ground Truth, Columns = Predicted):")
+    lines.append(df_norm.to_string())
+
+    # Top confusion patterns per class
+    lines.append("\n[TOP CONFUSION PATTERNS PER CLASS]:")
+    for i, label in enumerate(labels):
+        support = int(row_sums[i, 0])
+        if support == 0:
+            lines.append(f"  * {label:5s} (Support: 0 frames)")
+            continue
+        diag = cm[i, i]
+        rec = diag / support * 100.0
+        other_indices = [j for j in range(len(labels)) if j != i and cm[i, j] > 0]
+        other_indices.sort(key=lambda j: cm[i, j], reverse=True)
+        if other_indices:
+            misclass_str = ", ".join([f"{labels[j]}: {cm[i, j]:,d} ({cm[i, j]/support*100:.2f}%)" for j in other_indices[:4]])
+        else:
+            misclass_str = "None (100% correct)"
+        lines.append(f"  * {label:5s} (Support: {support:10,d} | Recall: {rec:5.2f}%): Confused with -> {misclass_str}")
+
+    return "\n".join(lines), df_raw, df_norm
+
+def format_top_97_confusions(cm, labels, top_n=25):
+    lines = []
+    lines.append("=" * 80)
+    lines.append(f"TOP {top_n} OFF-DIAGONAL CONFUSIONS ACROSS ALL 97 ROOT/TRIAD CLASSES")
+    lines.append("=" * 80)
+    row_sums = cm.sum(axis=1, keepdims=True)
+    confusions = []
+    num_classes = len(labels)
+    for i in range(num_classes):
+        support = int(row_sums[i, 0])
+        if support == 0:
+            continue
+        for j in range(num_classes):
+            if i != j and cm[i, j] > 0:
+                count = cm[i, j]
+                pct = count / support * 100.0
+                confusions.append((count, pct, labels[i], labels[j], support))
+
+    confusions.sort(key=lambda x: x[0], reverse=True)
+    lines.append(f"{'True Label':<12} -> {'Pred Label':<12} | {'Count':<10} | {'% of True':<10} | {'True Support':<12}")
+    lines.append("-" * 65)
+    for count, pct, true_lbl, pred_lbl, support in confusions[:top_n]:
+        lines.append(f"{true_lbl:<12} -> {pred_lbl:<12} | {count:<10,d} | {pct:<9.2f}% | {support:<12,d}")
+    return "\n".join(lines)
+
+def evaluate_heads(model_pattern='chordformer_head16(1.0,1.0)_s%d.best', max_songs=None, crf_penalty=2.0, tau=0.35, save_path=None, cm_dir='confusion_matrices', save_cm_csv=True):
     if save_path is None:
         tau_str = f"_tau{tau:.2f}" if (tau and tau > 0) else ""
         save_path = f'eval_heads_crf_p{crf_penalty:.1f}{tau_str}_report.txt' if (crf_penalty and crf_penalty > 0) else f'eval_heads{tau_str}_report.txt'
@@ -245,15 +319,18 @@ def evaluate_heads(model_pattern='chordformer_head16(1.0,1.0)_s%d.best', max_son
                 print(f"Processed {total_evaluated_songs} songs...")
 
     print(f"\nFinished inference on {total_evaluated_songs} total songs.")
-    
-    title = f"CHORDFORMER MULTI-HEAD EVALUATION ({mode_str}, {total_evaluated_songs} songs)"
-    format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual_preds, total_evaluated_songs, title, save_path)
 
-def format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual_preds, total_evaluated_songs, title, save_path):
+    title = f"CHORDFORMER MULTI-HEAD EVALUATION ({mode_str}, {total_evaluated_songs} songs)"
+    format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual_preds, total_evaluated_songs, title, save_path, cm_dir=cm_dir, save_cm_csv=save_cm_csv)
+
+def format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual_preds, total_evaluated_songs, title, save_path=None, cm_dir='confusion_matrices', save_cm_csv=True):
     report_lines = []
-    report_lines.append("=" * 70)
+    report_lines.append("=" * 80)
     report_lines.append(title)
-    report_lines.append("=" * 70)
+    report_lines.append("=" * 80)
+
+    if save_cm_csv and cm_dir:
+        os.makedirs(cm_dir, exist_ok=True)
 
     # 1. Specialized Triad Quality Report (8 classes: N, maj, min, sus4, sus2, dim, aug, 5, 1)
     targets_np = np.array(all_triad_qual_targets)
@@ -271,17 +348,61 @@ def format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual
     unique_labels = sorted(list(set(t_valid) | set(p_valid)))
     names = [TRIAD_NAMES[idx] if idx < len(TRIAD_NAMES) else f"Triad_{idx}" for idx in unique_labels]
     report_lines.append(classification_report(t_valid, p_valid, labels=unique_labels, target_names=names, zero_division=0, digits=4))
-    report_lines.append("-" * 70)
 
-    # 2. Six Heads
+    # Confusion matrix for Triad Quality
+    cm_triad = confusion_matrix(t_valid, p_valid, labels=list(range(len(TRIAD_NAMES))))
+    cm_text, df_triad_raw, df_triad_norm = format_confusion_matrix(cm_triad, TRIAD_NAMES, "Triad Quality (9 Classes)")
+    report_lines.append(cm_text)
+    if save_cm_csv and cm_dir:
+        df_triad_raw.to_csv(os.path.join(cm_dir, "cm_triad_quality_raw.csv"))
+        df_triad_norm.to_csv(os.path.join(cm_dir, "cm_triad_quality_norm.csv"))
+    report_lines.append("-" * 80)
+
+    # 2. Root Pitch Class (Isolated: C, C#, D, Eb, E, F, F#, G, Ab, A, Bb, B)
+    targets_0 = np.array(all_targets[0])
+    preds_0 = np.array(all_preds[0])
+    t_root = np.where(targets_0 <= 0, 0, (targets_0 - 1) % 12 + 1)
+    p_root = np.where(preds_0 <= 0, 0, (preds_0 - 1) % 12 + 1)
+    v_root = targets_0 >= 0
+    t_root_valid = t_root[v_root]
+    p_root_valid = p_root[v_root]
+
+    acc_f_root = accuracy_score(t_root_valid, p_root_valid)
+    acc_c_root = recall_score(t_root_valid, p_root_valid, average='macro', zero_division=0)
+    report_lines.append("\n=== Root Pitch Class (Isolated: C, C#, D, Eb, E, F, F#, G, Ab, A, Bb, B) ===")
+    report_lines.append(f"Frame-wise Accuracy (acc_frame): {acc_f_root:.4f}")
+    report_lines.append(f"Class-wise Accuracy (acc_class): {acc_c_root:.4f}")
+    report_lines.append("Detailed Report per Class:")
+    u_root = sorted(list(set(t_root_valid) | set(p_root_valid)))
+    names_root = [PITCH_NAMES[idx] if idx < len(PITCH_NAMES) else f"Pitch_{idx}" for idx in u_root]
+    report_lines.append(classification_report(t_root_valid, p_root_valid, labels=u_root, target_names=names_root, zero_division=0, digits=4))
+
+    # Confusion matrix for Root Pitch Class
+    cm_root = confusion_matrix(t_root_valid, p_root_valid, labels=list(range(len(PITCH_NAMES))))
+    cm_text, df_root_raw, df_root_norm = format_confusion_matrix(cm_root, PITCH_NAMES, "Root Pitch Class (13 Classes)")
+    report_lines.append(cm_text)
+    if save_cm_csv and cm_dir:
+        df_root_raw.to_csv(os.path.join(cm_dir, "cm_root_pitch_raw.csv"))
+        df_root_norm.to_csv(os.path.join(cm_dir, "cm_root_pitch_norm.csv"))
+    report_lines.append("-" * 80)
+
+    # 3. Six Heads
     head_names = ["Full Root/Triad (97 classes)", "Bass (13 classes)", "7th Extension", "9th Extension", "11th Extension", "13th Extension"]
     head_label_maps = [
-        None,
+        FULL_97_NAMES,
         BASS_NAMES,
         SEVENTH_NAMES,
         NINTH_NAMES,
         ELEVENTH_NAMES,
         THIRTEENTH_NAMES
+    ]
+    head_csv_names = [
+        "cm_head1_full97",
+        "cm_head2_bass",
+        "cm_head3_7th",
+        "cm_head4_9th",
+        "cm_head5_11th",
+        "cm_head6_13th"
     ]
 
     for h in range(6):
@@ -301,12 +422,39 @@ def format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual
         report_lines.append("Detailed Report per Class:")
 
         unique_labels = sorted(list(set(t_valid) | set(p_valid)))
-        if head_label_maps[h] is not None:
-            names = [head_label_maps[h][idx] if idx < len(head_label_maps[h]) else f"Class_{idx}" for idx in unique_labels]
+        lbl_map = head_label_maps[h]
+        if lbl_map is not None:
+            names = [lbl_map[idx] if idx < len(lbl_map) else f"Class_{idx}" for idx in unique_labels]
             report_lines.append(classification_report(t_valid, p_valid, labels=unique_labels, target_names=names, zero_division=0, digits=4))
         else:
             report_lines.append(classification_report(t_valid, p_valid, labels=unique_labels, zero_division=0, digits=4))
-        report_lines.append("-" * 70)
+
+        # Confusion Matrix
+        if h == 0:
+            # For Head 1 (97 classes): compute 97x97 confusion matrix
+            cm_97 = confusion_matrix(t_valid, p_valid, labels=list(range(97)))
+            df_97_raw = pd.DataFrame(cm_97, index=FULL_97_NAMES, columns=FULL_97_NAMES)
+            row_sums = cm_97.sum(axis=1, keepdims=True)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                cm_97_norm = np.where(row_sums > 0, cm_97 / row_sums * 100.0, 0.0)
+            df_97_norm = pd.DataFrame(np.round(cm_97_norm, 2), index=FULL_97_NAMES, columns=FULL_97_NAMES)
+
+            top_97_text = format_top_97_confusions(cm_97, FULL_97_NAMES, top_n=25)
+            report_lines.append(top_97_text)
+            if save_cm_csv and cm_dir:
+                df_97_raw.to_csv(os.path.join(cm_dir, f"{head_csv_names[h]}_raw.csv"))
+                df_97_norm.to_csv(os.path.join(cm_dir, f"{head_csv_names[h]}_norm.csv"))
+                report_lines.append(f"\nFull 97x97 confusion matrices saved to {cm_dir}/{head_csv_names[h]}_raw.csv and _norm.csv")
+        else:
+            labels_h = head_label_maps[h]
+            cm_h = confusion_matrix(t_valid, p_valid, labels=list(range(len(labels_h))))
+            cm_text, df_h_raw, df_h_norm = format_confusion_matrix(cm_h, labels_h, f"Head {h+1}: {head_names[h]}")
+            report_lines.append(cm_text)
+            if save_cm_csv and cm_dir:
+                df_h_raw.to_csv(os.path.join(cm_dir, f"{head_csv_names[h]}_raw.csv"))
+                df_h_norm.to_csv(os.path.join(cm_dir, f"{head_csv_names[h]}_norm.csv"))
+
+        report_lines.append("-" * 80)
 
     full_report = "\n".join(report_lines)
     print(full_report)
@@ -314,10 +462,10 @@ def format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual
     if save_path:
         with open(save_path, 'w') as f_out:
             f_out.write(full_report + "\n")
-        print(f"\nSaved full multi-head evaluation report to {save_path}")
+        print(f"\nSaved full multi-head evaluation report with confusion matrices to {save_path}")
     return full_report
 
-def evaluate_heads_from_lab(lab_dir='output/output_chordformer_head16(1.0,1.0)_s%d.best_hmm_full/jam/', max_songs=None, save_path='eval_heads_from_lab_report.txt'):
+def evaluate_heads_from_lab(lab_dir='output/output_chordformer_head16(1.0,1.0)_s%d.best_hmm_full/jam/', max_songs=None, save_path='eval_heads_from_lab_report.txt', cm_dir='confusion_matrices', save_cm_csv=True):
     print(f"Evaluating 6 heads directly from generated .lab files in {lab_dir}...")
     storage_y = FramedH5DataStorage('jams_xchord')
     storage_y.load_meta()
@@ -403,11 +551,11 @@ def evaluate_heads_from_lab(lab_dir='output/output_chordformer_head16(1.0,1.0)_s
             total_evaluated_songs += 1
 
     format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual_preds, total_evaluated_songs,
-                  f"CHORDFORMER MULTI-HEAD EVALUATION (From Composite HMM .lab, {total_evaluated_songs} songs)", save_path)
+                  f"CHORDFORMER MULTI-HEAD EVALUATION (From Composite HMM .lab, {total_evaluated_songs} songs)", save_path, cm_dir=cm_dir, save_cm_csv=save_cm_csv)
 
 if __name__ == '__main__':
     import argparse
-    parser = argparse.ArgumentParser(description="Multi-head chord evaluation with optional CRF Viterbi decoding")
+    parser = argparse.ArgumentParser(description="Multi-head chord evaluation with optional CRF Viterbi decoding and Confusion Matrices")
     parser.add_argument('--from_lab', action='store_true', help='Evaluate directly from generated .lab files without re-running network inference')
     parser.add_argument('--lab_dir', type=str, default='output/output_chordformer_head16(1.0,1.0)_s%d.best_hmm_full/jam/', help='Directory containing .lab files')
     parser.add_argument('--model_pattern', type=str, default='chordformer_head16(1.0,1.0)_s%d.best', help='Model checkpoint pattern (e.g. chordformer_head16_synth_ft_s%%d.best)')
@@ -417,12 +565,17 @@ if __name__ == '__main__':
     parser.add_argument('--tau', type=float, default=0.0, help='Logit adjustment temperature tau (default 0.0, set >0 to enable)')
     parser.add_argument('--no_logit_adj', action='store_true', help='Disable logit adjustment prior correction (equivalent to --tau 0.0)')
     parser.add_argument('--save_path', type=str, default=None, help='Custom output text file path')
+    parser.add_argument('--cm_dir', type=str, default='confusion_matrices', help='Directory to save CSV confusion matrices (default: confusion_matrices)')
+    parser.add_argument('--no_save_cm_csv', action='store_true', help='Disable saving CSV confusion matrices')
     args = parser.parse_args()
+
+    save_cm_csv = not args.no_save_cm_csv
 
     if args.from_lab:
         save_path = args.save_path or 'eval_heads_from_lab_report.txt'
-        evaluate_heads_from_lab(lab_dir=args.lab_dir, max_songs=args.max_songs, save_path=save_path)
+        evaluate_heads_from_lab(lab_dir=args.lab_dir, max_songs=args.max_songs, save_path=save_path, cm_dir=args.cm_dir, save_cm_csv=save_cm_csv)
     else:
         penalty = 0.0 if args.no_crf else args.penalty
         tau = 0.0 if args.no_logit_adj else args.tau
-        evaluate_heads(model_pattern=args.model_pattern, max_songs=args.max_songs, crf_penalty=penalty, tau=tau, save_path=args.save_path)
+        evaluate_heads(model_pattern=args.model_pattern, max_songs=args.max_songs, crf_penalty=penalty, tau=tau, save_path=args.save_path, cm_dir=args.cm_dir, save_cm_csv=save_cm_csv)
+
