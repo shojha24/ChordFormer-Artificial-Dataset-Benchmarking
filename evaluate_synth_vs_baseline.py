@@ -28,23 +28,38 @@ def parse_head_report(report_path):
             'acc_class': float(acc_c)
         }
 
-    # Extract specific interesting extension classes:
-    # 7th: 7, b7, bb7
-    # 9th: 9, #9, b9
-    # 11th: 11, #11
-    # 13th: 13, b13
-    target_classes = ['7', 'b7', 'bb7', '9', '#9', 'b9', '11', '#11', '13', 'b13', 'sus2', 'sus4', 'dim', 'aug']
-    for cls in target_classes:
-        pattern = rf'^\s+{re.escape(cls)}\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)\s+(\d+)'
-        match = re.search(pattern, content, re.MULTILINE)
-        if match:
-            prec, rec, f1, sup = match.groups()
-            results['rare_classes'][cls] = {
-                'precision': float(prec),
-                'recall': float(rec),
-                'f1': float(f1),
-                'support': int(sup)
-            }
+    # Extract specific extension & triad classes scoped to their owning head.
+    # Scoping prevents collisions where Head 1 integer class indices (e.g. 7, 9, 11, 13)
+    # in legacy reports collide with extension labels from Heads 3, 4, 5, 6,
+    # or where confusion matrix matrices collide with classification reports.
+    head_class_map = {
+        'Triad Quality': ['sus2', 'sus4', 'dim', 'aug'],
+        'Head 3': ['7', 'b7', 'bb7'],
+        'Head 4': ['9', '#9', 'b9'],
+        'Head 5': ['11', '#11'],
+        'Head 6': ['13', 'b13']
+    }
+
+    # Split report by section headers
+    sections = re.split(r'=== ([^=]+) ===', content)
+    for i in range(1, len(sections), 2):
+        header = sections[i]
+        # Ignore any confusion matrix blocks in this section
+        body = sections[i+1].split('CONFUSION MATRIX')[0]
+
+        for head_key, classes in head_class_map.items():
+            if head_key in header:
+                for cls in classes:
+                    pattern = rf'^\s+{re.escape(cls)}\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)\s+(\d+)'
+                    match = re.search(pattern, body, re.MULTILINE)
+                    if match:
+                        prec, rec, f1, sup = match.groups()
+                        results['rare_classes'][cls] = {
+                            'precision': float(prec),
+                            'recall': float(rec),
+                            'f1': float(f1),
+                            'support': int(sup)
+                        }
 
     return results
 

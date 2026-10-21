@@ -27,6 +27,7 @@ def pretrain_synthetic(
     seed=42,
     load_checkpoint=True,
     early_end_epochs=3,
+    head_weights=None,
 ):
     storage_x = FramedH5DataStorage('synth_naturalistic_cqt')
     storage_y = FramedH5DataStorage('synth_naturalistic_xchord')
@@ -90,8 +91,8 @@ def pretrain_synthetic(
     val_provider.link(storage_x, val_shifter, subrange=val_indices)
     val_provider.link(storage_y, ComplexChordShifter(), subrange=val_indices)
 
-    # Unweighted cross entropy across all 6 heads (uniform prior over synthetic harmonic space)
-    net = ChordNet(cross_subpart_counter=None, triad_only=False)
+    # Calibrated multi-head loss weighting across the 6 tasks
+    net = ChordNet(cross_subpart_counter=None, triad_only=False, head_weights=head_weights)
     trainer = NetworkInterface(
         net,
         save_name=save_name,
@@ -126,7 +127,10 @@ if __name__ == '__main__':
     parser.add_argument('--epochs_1e3', type=int, default=None, help='Epochs for 1e-3 phase (default: 4 for 5k corpus, 3 for 10k)')
     parser.add_argument('--epochs_1e4', type=int, default=None, help='Epochs for 1e-4 phase (default: 2)')
     parser.add_argument('--epochs_1e5', type=int, default=None, help='Epochs for 1e-5 phase (default: 1)')
+    parser.add_argument('--head_weights', type=str, default='1.0,1.25,0.8,0.5,0.3,0.2', help='Comma-separated head loss multipliers (default: 1.0,1.25,0.8,0.5,0.3,0.2)')
     args = parser.parse_args()
+
+    head_weights = [float(x.strip()) for x in args.head_weights.split(',')] if args.head_weights else None
 
     if args.quick_test:
         lr_schedule = {1e-3: 1, 1e-4: 1}
@@ -153,5 +157,6 @@ if __name__ == '__main__':
         total_songs=args.total_songs,
         val_count=args.val_count,
         early_end_epochs=args.early_end_epochs,
+        head_weights=head_weights,
         load_checkpoint=not args.no_load_checkpoint,
     )
