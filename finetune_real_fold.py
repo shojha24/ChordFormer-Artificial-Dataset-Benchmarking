@@ -36,6 +36,8 @@ def finetune_fold(
     loss_max_clip=10.0,
     loss_min_clip=None,
     loss_b7_clamp=True,
+    loss_triad_clamp=True,
+    loss_ninth_clamp=True,
     loss_power=0.5,
     discriminative_lr=True,
     val_metric='macro',
@@ -141,6 +143,8 @@ def finetune_fold(
         max_clip=loss_max_clip,
         min_clip=loss_min_clip,
         b7_clamp=loss_b7_clamp,
+        triad_clamp=loss_triad_clamp,
+        ninth_clamp=loss_ninth_clamp,
         discriminative_lr=discriminative_lr,
     )
 
@@ -195,6 +199,8 @@ if __name__ == '__main__':
     parser.add_argument('--loss_max_clip', type=float, default=10.0, help='Max class weight clip in ReweightedLoss (default: 10.0)')
     parser.add_argument('--loss_min_clip', type=float, default=None, help='Min class weight clip in ReweightedLoss (default: None)')
     parser.add_argument('--no_b7_clamp', action='store_true', help='Disable b7 weight clamp on 7th extension head')
+    parser.add_argument('--no_triad_clamp', action='store_true', help='Disable safe floor clamp on intermediate triads (sus4, 5, min)')
+    parser.add_argument('--no_ninth_clamp', action='store_true', help='Disable safe floor clamp on natural 9th')
     parser.add_argument('--loss_power', type=float, default=0.5, help='Power exponent in ReweightedLoss (default: 0.5)')
     parser.add_argument('--no_discriminative_lr', action='store_true', help='Disable discriminative learning rates')
     parser.add_argument('--val_metric', type=str, default='macro', choices=['macro', 'loss', 'composite'], help='Validation checkpoint selection metric (default: macro)')
@@ -241,6 +247,8 @@ if __name__ == '__main__':
             loss_max_clip=args.loss_max_clip,
             loss_min_clip=args.loss_min_clip,
             loss_b7_clamp=not args.no_b7_clamp,
+            loss_triad_clamp=not args.no_triad_clamp,
+            loss_ninth_clamp=not args.no_ninth_clamp,
             loss_power=args.loss_power,
             discriminative_lr=not args.no_discriminative_lr,
             val_metric=args.val_metric,

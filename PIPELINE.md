@@ -139,7 +139,7 @@ Fine-tunes the pretrained model on real music folds using the anti-forgetting ar
    * Bottom Conformer layers: $0.2 \times \text{lr}$ (preserves pretrained acoustic filters and vocal formant invariance).
    * Upper Conformer layers: $0.5 \times \text{lr}$.
    * Output classification heads: $1.0 \times \text{lr}$ (adapts rapidly to real class distributions).
-3. **Loss Reweighting (`--loss_power 0.5 --loss_max_clip 10.0`):** Weights rare chord alterations up to 10x without gradient explosion, with $b7$ floor protection.
+3. **Loss Reweighting (`--loss_power 0.5 --loss_max_clip 10.0`):** Weights rare chord alterations up to 10x without gradient explosion, with rare-class-safe floor protection for intermediate classes (`b7`, `sus4`, `5`, `min`, `9`).
 4. **Macro Checkpointing (`--val_metric macro`):** Selects best checkpoints based on macro class accuracy across all 6 heads.
 
 ### Run a Single Fold (e.g. Fold 0):
@@ -149,7 +149,7 @@ python finetune_real_fold.py 0 \
   --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
   --save_prefix chordformer_head16_synth_ft \
   --replay_ratio 0.20 \
-  --replay_floor 0.10 \
+  --replay_floor 0.15 \
   --loss_max_clip 10.0 \
   --loss_power 0.5 \
   --val_metric macro
@@ -162,7 +162,7 @@ python finetune_real_fold.py -1 \
   --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
   --save_prefix chordformer_head16_synth_ft \
   --replay_ratio 0.20 \
-  --replay_floor 0.10 \
+  --replay_floor 0.15 \
   --loss_max_clip 10.0 \
   --loss_power 0.5 \
   --val_metric macro
@@ -176,7 +176,7 @@ python finetune_real_fold.py 3,4 \
   --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
   --save_prefix chordformer_head16_synth_ft \
   --replay_ratio 0.20 \
-  --replay_floor 0.10 \
+  --replay_floor 0.15 \
   --loss_max_clip 10.0 \
   --loss_power 0.5 \
   --val_metric macro
@@ -187,7 +187,7 @@ python finetune_real_fold.py -1 --start_fold 3 \
   --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
   --save_prefix chordformer_head16_synth_ft \
   --replay_ratio 0.20 \
-  --replay_floor 0.10 \
+  --replay_floor 0.15 \
   --loss_max_clip 10.0 \
   --loss_power 0.5 \
   --val_metric macro

@@ -52,7 +52,7 @@ chord_limit=ChordTypeLimit(
 
 class ReweightedLoss(nn.Module):
 
-    def __init__(self,counter=None,power=0.5,max_clip=10.0,min_clip=None,b7_clamp=True,gpu=False,triad_only=False):
+    def __init__(self,counter=None,power=0.5,max_clip=10.0,min_clip=None,b7_clamp=True,triad_clamp=True,ninth_clamp=True,gpu=False,triad_only=False):
         super(ReweightedLoss, self).__init__()
         self.weight=[None]*6
         if(counter is not None):
@@ -66,13 +66,52 @@ class ReweightedLoss(nn.Module):
                 self.weight[i][self.weight[i]>max_clip]=max_clip
                 if(min_clip is not None):
                     self.weight[i][self.weight[i]<min_clip]=min_clip
-            # b7 clamp: Head 3 (7th extension, index 2 in weight list)
+
+            # 1. b7 clamp: Head 3 (7th extension, index 2 in weight list)
             # In Head 3: index 0=N, index 1=7, index 2=b7, index 3=bb7.
             # Avoid severe underweighting of b7 relative to 7 and bb7 by clamping b7 weight.
+            # Safety bound: b7 is strictly capped to never exceed 85% of 7 and remains far below bb7 (10.0).
             if(b7_clamp and self.weight[2] is not None and len(self.weight[2]) > 2):
                 b7_floor = max(self.weight[2][1].item() * 0.8, 3.5)
+                b7_floor = min(b7_floor, self.weight[2][1].item() * 0.85)
                 if self.weight[2][2] < b7_floor:
                     self.weight[2][2] = b7_floor
+
+            # 2. ninth clamp: Head 4 (9th extension, index 3 in weight list)
+            # In Head 4: index 0=N, index 1=9, index 2=#9, index 3=b9.
+            # Protect natural 9 from swamping by N without overpenalizing rare altered 9ths (#9, b9).
+            # Safety bound: natural 9 is strictly bounded below 60% of the rare altered classes (10.0).
+            if(ninth_clamp and self.weight[3] is not None and len(self.weight[3]) > 3):
+                min_rare_9 = min(self.weight[3][2].item(), self.weight[3][3].item())
+                ninth_floor = min(6.0, min_rare_9 * 0.60)
+                if self.weight[3][1] < ninth_floor:
+                    self.weight[3][1] = ninth_floor
+
+            # 3. triad clamp: Head 1 (Triad Quality, index 0 in weight list)
+            # Protect intermediate classes sus4, 5, and min from being absorbed into maj (1.0).
+            # Safety bound: sus4 and 5 are strictly bounded below all rare triads (sus2, dim, aug at 10.0, 1 at ~7.0).
+            if(triad_clamp and self.weight[0] is not None and len(self.weight[0]) > 84):
+                min_rare_triad = min(
+                    self.weight[0][1 + 3*12].item(),  # sus2 (10.0)
+                    self.weight[0][1 + 4*12].item(),  # dim (10.0)
+                    self.weight[0][1 + 5*12].item(),  # aug (10.0)
+                    self.weight[0][1 + 7*12].item()   # 1 (~7.04)
+                )
+                sus4_floor = min(6.8, min_rare_triad * 0.95)
+                for idx in range(1 + 2*12, 1 + 3*12):
+                    if self.weight[0][idx] < sus4_floor:
+                        self.weight[0][idx] = sus4_floor
+
+                five_floor = min(6.0, min_rare_triad * 0.85)
+                for idx in range(1 + 6*12, 1 + 7*12):
+                    if self.weight[0][idx] < five_floor:
+                        self.weight[0][idx] = five_floor
+
+                min_floor = 2.0
+                for idx in range(1 + 1*12, 1 + 2*12):
+                    if self.weight[0][idx] < min_floor:
+                        self.weight[0][idx] = min_floor
+
             if(gpu==True):
                 for i in range(6):
                     if self.weight[i] is not None:
@@ -431,7 +470,7 @@ class ChordConformer(torch.nn.Module):
 class ChordNet(NetworkBehavior):
 
     def __init__(self,cross_subpart_counter,triad_only=False,chord_limit=chord_limit,
-                 power=0.5,max_clip=10.0,min_clip=None,b7_clamp=True,discriminative_lr=False,lr_scales=None):
+                 power=0.5,max_clip=10.0,min_clip=None,b7_clamp=True,triad_clamp=True,ninth_clamp=True,discriminative_lr=False,lr_scales=None):
         super(ChordNet, self).__init__()
         self.triad_only=triad_only
         self.chord_limit=chord_limit
@@ -449,7 +488,7 @@ class ChordNet(NetworkBehavior):
         self.final_fc1=nn.Linear(self.hidden_dim1,self.output_dim1+self.output_dim2)
 
         #self.loss_calc=FocalLoss(gamma=2.0)
-        self.loss_reweight=ReweightedLoss(cross_subpart_counter,power=power,max_clip=max_clip,min_clip=min_clip,b7_clamp=b7_clamp,gpu=self.use_gpu,triad_only=triad_only)
+        self.loss_reweight=ReweightedLoss(cross_subpart_counter,power=power,max_clip=max_clip,min_clip=min_clip,b7_clamp=b7_clamp,triad_clamp=triad_clamp,ninth_clamp=ninth_clamp,gpu=self.use_gpu,triad_only=triad_only)
 
     def get_optimizer(self):
         if not self.discriminative_lr:
