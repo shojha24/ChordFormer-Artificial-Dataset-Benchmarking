@@ -50,7 +50,7 @@ Ensure the working directories and generated 5k assets (or 10k assets) are prese
                         ▼
                finetune_real_fold.py {0..4} --no_load_checkpoint
                - Floor Curriculum Replay: 20% (1e-4) → 17.5% (1e-5) → 15% floor (1e-6)
-               - Calibrated Multi-Head ReweightedLoss (power=0.25, max_clip=4.0, head_weights=[1.0, 1.25, 0.8, 0.5, 0.3, 0.2])
+               - Corrected ReweightedLoss (power=0.5, max_clip=10.0, b7_clamp=True)
                - Inverted Discriminative LR (Bottom: 0.2x, Top: 0.5x, Head: 1.0x)
                - Macro-score checkpoint selection across 6 heads
                         │
@@ -139,7 +139,7 @@ Fine-tunes the pretrained model on real music folds using the anti-forgetting ar
    * Bottom Conformer layers: $0.2 \times \text{lr}$ (preserves pretrained acoustic filters and vocal formant invariance).
    * Upper Conformer layers: $0.5 \times \text{lr}$.
    * Output classification heads: $1.0 \times \text{lr}$ (adapts rapidly to real class distributions).
-3. **Calibrated Multi-Head ReweightedLoss (`--loss_power 0.25 --loss_max_clip 4.0 --head_weights "1.0,1.25,0.8,0.5,0.3,0.2"`):** Spec 01 / Spec 19 calibrated loss regime. Weights rare chord alterations up to 4x without false-positive flooding into `N`/`maj`, removes artificial `b7_clamp`, and assigns 1.25x loss importance to Head 1 (Bass).
+3. **Loss Reweighting (`--loss_power 0.5 --loss_max_clip 10.0`):** Weights rare chord alterations up to 10x without gradient explosion, with $b7$ floor protection.
 4. **Macro Checkpointing (`--val_metric macro`):** Selects best checkpoints based on macro class accuracy across all 6 heads.
 
 ### Run a Single Fold (e.g. Fold 0):
@@ -149,10 +149,9 @@ python finetune_real_fold.py 0 \
   --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
   --save_prefix chordformer_head16_synth_ft \
   --replay_ratio 0.20 \
-  --replay_floor 0.15 \
-  --loss_max_clip 4.0 \
-  --loss_power 0.25 \
-  --head_weights "1.0,1.25,0.8,0.5,0.3,0.2" \
+  --replay_floor 0.10 \
+  --loss_max_clip 10.0 \
+  --loss_power 0.5 \
   --val_metric macro
 ```
 
@@ -163,10 +162,9 @@ python finetune_real_fold.py -1 \
   --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
   --save_prefix chordformer_head16_synth_ft \
   --replay_ratio 0.20 \
-  --replay_floor 0.15 \
-  --loss_max_clip 4.0 \
-  --loss_power 0.25 \
-  --head_weights "1.0,1.25,0.8,0.5,0.3,0.2" \
+  --replay_floor 0.10 \
+  --loss_max_clip 10.0 \
+  --loss_power 0.5 \
   --val_metric macro
 ```
 
@@ -178,10 +176,9 @@ python finetune_real_fold.py 3,4 \
   --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
   --save_prefix chordformer_head16_synth_ft \
   --replay_ratio 0.20 \
-  --replay_floor 0.15 \
-  --loss_max_clip 4.0 \
-  --loss_power 0.25 \
-  --head_weights "1.0,1.25,0.8,0.5,0.3,0.2" \
+  --replay_floor 0.10 \
+  --loss_max_clip 10.0 \
+  --loss_power 0.5 \
   --val_metric macro
 
 # Option 2: Use -1 with --start_fold 3 (skips folds 0, 1, 2)
@@ -190,10 +187,9 @@ python finetune_real_fold.py -1 --start_fold 3 \
   --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
   --save_prefix chordformer_head16_synth_ft \
   --replay_ratio 0.20 \
-  --replay_floor 0.15 \
-  --loss_max_clip 4.0 \
-  --loss_power 0.25 \
-  --head_weights "1.0,1.25,0.8,0.5,0.3,0.2" \
+  --replay_floor 0.10 \
+  --loss_max_clip 10.0 \
+  --loss_power 0.5 \
   --val_metric macro
 ```
 
