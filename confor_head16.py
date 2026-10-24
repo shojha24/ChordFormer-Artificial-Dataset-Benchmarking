@@ -678,7 +678,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_name', type=str, default=None, help='Model save name')
     parser.add_argument('--batch_size', type=int, default=48, help='Batch size (default: 48)')
     parser.add_argument('--val_batch_size', type=int, default=1, help='Validation batch size (default: 1)')
-    parser.add_argument('--val_metric', type=str, default='loss', choices=['loss', 'macro', 'composite'], help='Validation checkpoint selection metric (default: loss)')
+    parser.add_argument('--val_metric', type=str, default='macro_f1', choices=['macro_f1', 'macro', 'loss', 'composite'], help='Validation checkpoint selection metric (default: macro_f1)')
     parser.add_argument('--num_workers', type=int, default=8, help='Worker threads (default: 8)')
     args = parser.parse_args()
 

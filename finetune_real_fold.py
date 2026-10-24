@@ -40,7 +40,7 @@ def finetune_fold(
     loss_ninth_clamp=True,
     loss_power=0.5,
     discriminative_lr=True,
-    val_metric='macro',
+    val_metric='macro_f1',
 ):
     if learning_rates_dict is None:
         learning_rates_dict = {1e-4: 12, 1e-5: 8, 1e-6: 4}
@@ -203,7 +203,7 @@ if __name__ == '__main__':
     parser.add_argument('--no_ninth_clamp', action='store_true', help='Disable safe floor clamp on natural 9th')
     parser.add_argument('--loss_power', type=float, default=0.5, help='Power exponent in ReweightedLoss (default: 0.5)')
     parser.add_argument('--no_discriminative_lr', action='store_true', help='Disable discriminative learning rates')
-    parser.add_argument('--val_metric', type=str, default='macro', choices=['macro', 'loss', 'composite'], help='Validation checkpoint selection metric (default: macro)')
+    parser.add_argument('--val_metric', type=str, default='macro_f1', choices=['macro_f1', 'macro', 'loss', 'composite'], help='Validation checkpoint selection metric (default: macro_f1)')
     parser.add_argument('--no_load_checkpoint', action='store_true', help='Do not resume from existing checkpoint')
     parser.add_argument('--no_anneal_replay', action='store_true', help='Disable replay ratio annealing across LR schedule')
     parser.add_argument('--quick_test', action='store_true', help='Run a quick 1-epoch test per fold')

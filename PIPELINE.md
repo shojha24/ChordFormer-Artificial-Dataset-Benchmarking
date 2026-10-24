@@ -139,23 +139,42 @@ Fine-tunes the pretrained model on real music folds using the anti-forgetting ar
    * Bottom Conformer layers: $0.2 \times \text{lr}$ (preserves pretrained acoustic filters and vocal formant invariance).
    * Upper Conformer layers: $0.5 \times \text{lr}$.
    * Output classification heads: $1.0 \times \text{lr}$ (adapts rapidly to real class distributions).
-3. **Loss Reweighting (`--loss_power 0.5 --loss_max_clip 10.0`):** Weights rare chord alterations up to 10x without gradient explosion, with rare-class-safe floor protection for intermediate classes (`b7`, `sus4`, `5`, `min`, `9`).
-4. **Macro Checkpointing (`--val_metric macro`):** Selects best checkpoints based on macro class accuracy across all 6 heads.
+3. **Loss Reweighting (`--loss_power 0.5 --loss_max_clip 10.0`):** Weights rare chord alterations up to 10x without gradient explosion. Floors can be toggled via `--no_b7_clamp`, `--no_triad_clamp`, and `--no_ninth_clamp`.
+4. **Macro-F1 Checkpointing (`--val_metric macro_f1`):** Selects best checkpoints based on true macro-F1 (harmonic mean of precision and recall) across all 6 heads, avoiding pure-recall over-prediction bias.
 
-### Run a Single Fold (e.g. Fold 0):
-```bash
-python finetune_real_fold.py 0 \
-  --no_load_checkpoint \
-  --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
-  --save_prefix chordformer_head16_synth_ft \
-  --replay_ratio 0.20 \
-  --replay_floor 0.15 \
-  --loss_max_clip 10.0 \
-  --loss_power 0.5 \
-  --val_metric macro
-```
+### Retraining Options: Stacked vs. Single Correction
 
-### Run All 5 Cross-Validation Folds:
+If retraining Stage 2 fine-tuning to fix prior shift at the root:
+
+* **Recommended Option A (Replay-dominant, unweighted loss):**
+  Uses synthetic replay for acoustic feature generalization without artificial loss magnification:
+  ```bash
+  python finetune_real_fold.py -1 \
+    --no_load_checkpoint \
+    --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
+    --save_prefix chordformer_head16_synth_ft_unweighted \
+    --replay_ratio 0.15 \
+    --replay_floor 0.10 \
+    --loss_power 0.0 \
+    --no_b7_clamp --no_triad_clamp --no_ninth_clamp \
+    --val_metric macro_f1
+  ```
+
+* **Recommended Option B (Reweight-dominant, no synthetic replay):**
+  Uses conservative square-root inverse-frequency loss on purely real music:
+  ```bash
+  python finetune_real_fold.py -1 \
+    --no_load_checkpoint \
+    --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
+    --save_prefix chordformer_head16_synth_ft_reweighted \
+    --replay_ratio 0.0 \
+    --loss_power 0.25 \
+    --loss_max_clip 5.0 \
+    --no_b7_clamp --no_triad_clamp --no_ninth_clamp \
+    --val_metric macro_f1
+  ```
+
+### Standard Run (All 5 Folds with Macro-F1 Selection):
 ```bash
 python finetune_real_fold.py -1 \
   --no_load_checkpoint \
@@ -165,43 +184,45 @@ python finetune_real_fold.py -1 \
   --replay_floor 0.15 \
   --loss_max_clip 10.0 \
   --loss_power 0.5 \
-  --val_metric macro
-```
-
-### Resume or Run Specific Folds (e.g. Folds 3 and 4):
-```bash
-# Option 1: Pass comma-separated folds (e.g. 3,4 or 3-4)
-python finetune_real_fold.py 3,4 \
-  --no_load_checkpoint \
-  --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
-  --save_prefix chordformer_head16_synth_ft \
-  --replay_ratio 0.20 \
-  --replay_floor 0.15 \
-  --loss_max_clip 10.0 \
-  --loss_power 0.5 \
-  --val_metric macro
-
-# Option 2: Use -1 with --start_fold 3 (skips folds 0, 1, 2)
-python finetune_real_fold.py -1 --start_fold 3 \
-  --no_load_checkpoint \
-  --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
-  --save_prefix chordformer_head16_synth_ft \
-  --replay_ratio 0.20 \
-  --replay_floor 0.15 \
-  --loss_max_clip 10.0 \
-  --loss_power 0.5 \
-  --val_metric macro
+  --val_metric macro_f1
 ```
 
 * **Output Checkpoints:** `cache_data/chordformer_head16_synth_ft_s0.best.sdict` ... `s4.best.sdict`.
 
 ---
 
-## Step 5: Stage 3 — Evaluation & Benchmarking
+## Step 5: Post-Hoc Bias Calibration & Evaluation (No Retraining Required)
 
-### 5.1 Evaluate Fine-Tuned Model Across All 6 Heads
-Runs CRF Viterbi decoding and **Post-Hoc Logit Adjustment** ($\tau = 0.35$ by default) across all 5 test splits (1,217 songs):
+Runs out-of-fold cross-fitting of per-class biases directly on the existing 5 fold checkpoints to eliminate over-prediction:
 
+### 5.1 Run 5-Fold Cross-Fitted Calibration & Frontier Evaluation
+```bash
+python calibrate_biases.py \
+  --penalty 2.0 \
+  --passes 2 \
+  --save_report eval_bias_calibration_report.txt
+```
+
+* **What `calibrate_biases.py` does:**
+  1. **Out-of-Fold Cross-Fitting:** For evaluating fold $k$, fits biases on pooled predictions from the other 4 folds $j \ne k$ and scores on fold $k$, rotating across all 5 folds.
+  2. **Triad Quality Broadcasting:** Tunes a 9-dimensional quality bias vector ($N, \text{maj}, \text{min}, \text{sus4}, \text{sus2}, \text{dim}, \text{aug}, 5, 1$) shared across all 12 roots to prevent overfitting small cells (e.g. `Eb:sus2`).
+  3. **Stage 1 (Marginal Matching):** Damped iteration ($0.30 \to 0.05$ decaying $\eta$, bounded $|b| \le 3$, $b[N]=0$ fixed reference) with Viterbi decoding inside the loop.
+  4. **Stage 2 (Coordinate Ascent):** Directly optimizes biases on Macro-F1 on the calibration set.
+  5. **Pareto Frontier Sweep:** Evaluates operating points across scalar multipliers $\alpha \in [0.0, 1.5]$ on marginal biases vs. F1-Ascent biases.
+  6. **Stability Check:** Reports mean $\pm$ std and range of fitted biases across the 5 cross-validation splits.
+  7. **Group Metrics:** Reports accuracy, macro-F1, macro recall (`acc_class`), and F1 grouped into Head, Medium, and Tail classes.
+  8. **Ablations:** Evaluates "1" chord merge options (separate vs. map to `5` vs. map to `N`) and tests the maximum achievable binary F1 ceiling for the 13th head.
+
+* **Quick Check (e.g. 20 songs per fold):**
+  ```bash
+  python calibrate_biases.py --max_songs 20 --save_report quick_calibration_report.txt
+  ```
+
+---
+
+## Step 6: Full Multi-Head Evaluation & Baseline Comparison
+
+### 6.1 Multi-Head Evaluation Across 1,217 Real Songs
 ```bash
 python eval_heads.py \
   --model_pattern "chordformer_head16_synth_ft_s%d.best" \
@@ -210,19 +231,26 @@ python eval_heads.py \
   --save_path eval_heads_synth_ft_report.txt
 ```
 
-* **Logit Adjustment Options:**
-  * `--tau 0.35` (default): Adjusts inference logits $z'_k = z_k + \tau \log \pi_k$ using empirical natural class priors, eliminating false positives on rare extensions and recovering overall frame accuracy.
-  * `--no_logit_adj` or `--tau 0.0`: Runs raw unadjusted inference.
-
-### 5.2 Compare Against Real Baseline
-Calculates macro gain, head frame accuracy, and rare alteration recall gains against the baseline 1217 model:
-
+### 6.2 Compare Against Real Baseline
 ```bash
 python evaluate_synth_vs_baseline.py \
   --baseline eval_heads_report.txt \
   --synth eval_heads_synth_ft_report.txt \
   --out eval_comparison_summary.txt
 ```
+
+---
+
+## Key Diagnostics & Empirical Notes
+
+1. **7th Head Annotation Gap:**
+   * In real music, $P(b7 \mid \text{maj}) = 15.23\%$ ($P(\text{any } 7 \mid \text{maj}) = 22.35\%$). $77.65\%$ of real major triads omit 7ths.
+   * In synthetic music, $P(b7 \mid \text{maj}) = 30.62\%$ ($P(\text{any } 7 \mid \text{maj}) = 41.19\%$). Only $58.81\%$ of synthetic major triads omit 7ths.
+   * The synthetic generator injects dominant sevenths on major chords at more than double the real human transcription rate.
+
+2. **Root Cause of Intermediate Class Over-Prediction:**
+   * `sus4`, `5`, and `9` over-prediction was driven by hard clamping floors in `ReweightedLoss` (floors of 6–7) combined with pure-recall checkpointing (`--val_metric macro`).
+   * Switching checkpoint selection to `--val_metric macro_f1` in `mir/nn/train.py` ensures validation monitors the harmonic mean of precision and recall.
 
 ---
 
@@ -236,10 +264,13 @@ python create_synth_storage.py --overwrite --num_workers 16
 # 2. Stage 1: Pretrain on synthetic 5k corpus (~10,500 steps, 7 epochs)
 python pretrain_synthetic.py
 
-# 3. Stage 2: Fine-tune on real folds (Fold 0 test, warm-starting from Stage 1 with 15% floor replay)
-python finetune_real_fold.py 0 --no_load_checkpoint --replay_ratio 0.2 --replay_floor 0.15 --val_metric macro
+# 3. Stage 2: Fine-tune on real folds (Fold 0 test, warm-starting from Stage 1 with Macro-F1 checkpoint selection)
+python finetune_real_fold.py 0 --no_load_checkpoint --replay_ratio 0.2 --replay_floor 0.15 --val_metric macro_f1
 
-# 4. Stage 3: Evaluate with 400x Fast CRF (--tau 0.0 for maximum rare recall) and compare
+# 4. Stage 3: Post-Hoc 5-Fold Cross-Fitted Bias Calibration & Pareto Frontier Evaluation
+python calibrate_biases.py --penalty 2.0 --save_report eval_bias_calibration_report.txt
+
+# 5. Stage 4: Multi-head benchmark comparison against baseline
 python eval_heads.py --model_pattern "chordformer_head16_synth_ft_s%d.best" --tau 0.0 --save_path eval_heads_synth_ft_report.txt
 python evaluate_synth_vs_baseline.py --baseline eval_heads_report.txt --synth eval_heads_synth_ft_report.txt
 ```

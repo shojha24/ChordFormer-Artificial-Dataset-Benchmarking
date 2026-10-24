@@ -302,32 +302,48 @@ class NetworkInterface:
                         mean_val_loss=val_loss/j
 
                         head_macro_accs = []
+                        head_macro_f1s = []
                         macro_score = 0.0
+                        macro_f1_score = 0.0
                         if has_eval and total_cm[0] is not None:
                             head_names = ['R/T', 'Bass', '7th', '9th', '11th', '13th']
                             macro_str_parts = []
+                            f1_str_parts = []
                             for h in range(6):
                                 supp = total_cm[h].sum(axis=1)
+                                pred_supp = total_cm[h].sum(axis=0)
                                 valid_c = supp > 0
                                 if valid_c.sum() > 0:
                                     rec = total_cm[h].diagonal()[valid_c] / supp[valid_c]
                                     m_acc = float(rec.mean())
+                                    prec = np.where(pred_supp[valid_c] > 0, total_cm[h].diagonal()[valid_c] / np.maximum(pred_supp[valid_c], 1e-9), 0.0)
+                                    f1_denom = prec + rec
+                                    f1 = np.where(f1_denom > 0, 2.0 * prec * rec / np.maximum(f1_denom, 1e-9), 0.0)
+                                    m_f1 = float(f1.mean())
                                 else:
                                     m_acc = 0.0
+                                    m_f1 = 0.0
                                 head_macro_accs.append(m_acc)
+                                head_macro_f1s.append(m_f1)
                                 macro_str_parts.append(f'{head_names[h]}: {m_acc*100:.1f}%')
+                                f1_str_parts.append(f'{head_names[h]}: {m_f1*100:.1f}%')
                             overall_macro = float(np.mean(head_macro_accs))
+                            overall_macro_f1 = float(np.mean(head_macro_f1s))
                             ext_macro = float(np.mean(head_macro_accs[2:]))
+                            ext_macro_f1 = float(np.mean(head_macro_f1s[2:]))
                             macro_score = overall_macro
-                            composite_score = macro_score - 0.1 * mean_val_loss
-                            macro_summary = f" | Macro: {' '.join(macro_str_parts)} (Ext: {ext_macro*100:.1f}%, All: {overall_macro*100:.1f}%)"
+                            macro_f1_score = overall_macro_f1
+                            composite_score = macro_f1_score - 0.1 * mean_val_loss
+                            macro_summary = f" | Rec: {' '.join(macro_str_parts)} | F1: {' '.join(f1_str_parts)} (Macro-F1: {overall_macro_f1*100:.1f}%)"
                         else:
                             macro_summary = ""
                             overall_macro = 0.0
+                            overall_macro_f1 = 0.0
                             ext_macro = 0.0
+                            ext_macro_f1 = 0.0
                             composite_score = -mean_val_loss
 
-                        score_str = f" best_val_score: {self.best_val_score:.4f}" if (val_metric in ['macro', 'composite'] and self.best_val_score != -np.inf) else ""
+                        score_str = f" best_val_score: {self.best_val_score:.4f}" if (val_metric in ['macro', 'macro_f1', 'composite'] and self.best_val_score != -np.inf) else ""
                         print('[%f, %.2f%% (%d/%d)] val_loss: %.6f best_val_loss: %.6f%s%s (%d epochs away)' %
                               (learning_rate,(i+1)/batch_count*100,i+1,batch_count,
                                mean_val_loss,self.best_val_loss,score_str,macro_summary,self.best_epoch_dist),flush=True)
@@ -335,7 +351,9 @@ class NetworkInterface:
                         if(self.net.use_gpu):
                             self.net.cpu()
 
-                        if val_metric == 'macro' and has_eval:
+                        if val_metric == 'macro_f1' and has_eval:
+                            improved = macro_f1_score > self.best_val_score
+                        elif val_metric == 'macro' and has_eval:
                             improved = macro_score > self.best_val_score
                         elif val_metric == 'composite' and has_eval:
                             improved = composite_score > self.best_val_score
@@ -343,7 +361,9 @@ class NetworkInterface:
                             improved = mean_val_loss < self.best_val_loss
 
                         if improved:
-                            if val_metric == 'macro':
+                            if val_metric == 'macro_f1':
+                                self.best_val_score = macro_f1_score
+                            elif val_metric == 'macro':
                                 self.best_val_score = macro_score
                             elif val_metric == 'composite':
                                 self.best_val_score = composite_score
@@ -353,7 +373,9 @@ class NetworkInterface:
                                 'loss': mean_val_loss,
                                 'val_metric': val_metric,
                                 'macro_score': macro_score,
+                                'macro_f1_score': macro_f1_score,
                                 'head_macro_accs': head_macro_accs,
+                                'head_macro_f1s': head_macro_f1s,
                                 'learning_rate': learning_rate,
                                 'step': i,
                                 'batch_count': batch_count,
