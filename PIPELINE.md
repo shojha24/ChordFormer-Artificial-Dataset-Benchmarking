@@ -223,20 +223,43 @@ python calibrate_biases.py \
 ## Step 6: Full Multi-Head Evaluation & Baseline Comparison
 
 ### 6.1 Multi-Head Evaluation Across 1,217 Real Songs
-```bash
-python eval_heads.py \
-  --model_pattern "chordformer_head16_synth_ft_s%d.best" \
-  --crf_penalty 2.0 \
-  --tau 0.0 \
-  --save_path eval_heads_synth_ft_report.txt
-```
+
+* **Option A: Evaluate with Coordinate-Ascent Calibrated Biases (Peak Macro-F1 + 1->5 Merge):**
+  ```bash
+  python eval_heads.py \
+    --model_pattern "chordformer_head16_synth_ft_s%d.best" \
+    --crf_penalty 2.0 \
+    --bias_mode f1_ascent \
+    --merge_1_to_5 \
+    --save_path eval_heads_calibrated_f1_report.txt
+  ```
+
+* **Option B: Evaluate with Marginal Matching Biases (alpha=0.75):**
+  ```bash
+  python eval_heads.py \
+    --model_pattern "chordformer_head16_synth_ft_s%d.best" \
+    --crf_penalty 2.0 \
+    --bias_mode marginal \
+    --alpha 0.75 \
+    --merge_1_to_5 \
+    --save_path eval_heads_calibrated_marg075_report.txt
+  ```
+
+* **Option C: Raw Unadjusted Inference (Baseline):**
+  ```bash
+  python eval_heads.py \
+    --model_pattern "chordformer_head16_synth_ft_s%d.best" \
+    --crf_penalty 2.0 \
+    --tau 0.0 \
+    --save_path eval_heads_synth_ft_report.txt
+  ```
 
 ### 6.2 Compare Against Real Baseline
 ```bash
 python evaluate_synth_vs_baseline.py \
   --baseline eval_heads_report.txt \
-  --synth eval_heads_synth_ft_report.txt \
-  --out eval_comparison_summary.txt
+  --synth eval_heads_calibrated_f1_report.txt \
+  --out eval_comparison_calibrated_summary.txt
 ```
 
 ---

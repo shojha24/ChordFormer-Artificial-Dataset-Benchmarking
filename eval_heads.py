@@ -213,17 +213,35 @@ def format_top_97_confusions(cm, labels, top_n=25):
         lines.append(f"{true_lbl:<12} -> {pred_lbl:<12} | {count:<10,d} | {pct:<9.2f}% | {support:<12,d}")
     return "\n".join(lines)
 
-def evaluate_heads(model_pattern='chordformer_head16(1.0,1.0)_s%d.best', max_songs=None, crf_penalty=2.0, tau=0.35, save_path=None, cm_dir='confusion_matrices', save_cm_csv=True):
+def evaluate_heads(model_pattern='chordformer_head16(1.0,1.0)_s%d.best', max_songs=None, crf_penalty=2.0, tau=0.35, save_path=None, cm_dir='confusion_matrices', save_cm_csv=True, bias_mode='none', alpha=1.0, bias_path='cache_data/calibrated_biases.pkl', merge_1_to_5=False):
     if save_path is None:
-        tau_str = f"_tau{tau:.2f}" if (tau and tau > 0) else ""
-        save_path = f'eval_heads_crf_p{crf_penalty:.1f}{tau_str}_report.txt' if (crf_penalty and crf_penalty > 0) else f'eval_heads{tau_str}_report.txt'
+        if bias_mode != 'none':
+            b_str = f"_{bias_mode}_a{alpha:.2f}"
+            save_path = f'eval_heads_crf_p{crf_penalty:.1f}{b_str}_report.txt' if (crf_penalty and crf_penalty > 0) else f'eval_heads{b_str}_report.txt'
+        else:
+            tau_str = f"_tau{tau:.2f}" if (tau and tau > 0) else ""
+            save_path = f'eval_heads_crf_p{crf_penalty:.1f}{tau_str}_report.txt' if (crf_penalty and crf_penalty > 0) else f'eval_heads{tau_str}_report.txt'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     mode_str = f"CRF Viterbi Decoding (penalty={crf_penalty})" if (crf_penalty and crf_penalty > 0) else "Raw ArgMax (No CRF)"
-    if tau and tau > 0:
+    if bias_mode != 'none':
+        mode_str += f" + Calibrated Biases ({bias_mode}, alpha={alpha:.2f})"
+    elif tau and tau > 0:
         mode_str += f" + Logit Adj (tau={tau:.2f})"
     print(f"Evaluating 6 heads on {device} using {mode_str} with model pattern '{model_pattern}' across all 5 cross-validation folds...")
 
-    log_priors = compute_class_log_priors() if (tau and tau > 0) else None
+    loaded_biases = None
+    if bias_mode != 'none':
+        import pickle
+        if os.path.exists(bias_path):
+            with open(bias_path, 'rb') as f:
+                b_dict = pickle.load(f)
+            loaded_biases = b_dict.get(bias_mode, None)
+            if loaded_biases is not None:
+                print(f"Loaded '{bias_mode}' calibrated biases from {bias_path} (alpha={alpha:.2f})")
+        else:
+            print(f"Warning: {bias_path} not found. Bias calibration disabled.")
+
+    log_priors = compute_class_log_priors() if (tau and tau > 0 and loaded_biases is None) else None
 
     storage_x = FramedH5DataStorage('jams_cqt')
     storage_y = FramedH5DataStorage('jams_xchord')
@@ -267,8 +285,29 @@ def evaluate_heads(model_pattern='chordformer_head16(1.0,1.0)_s%d.best', max_son
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
                 probs = model.inference(cqt)
 
-            # Apply Post-Hoc Logit Adjustment (Menon et al.) if tau > 0
-            if log_priors is not None and tau > 0.0:
+            # Apply Calibrated Biases or Post-Hoc Logit Adjustment
+            if loaded_biases is not None and alpha > 0.0:
+                adjusted_probs = []
+                b_q = loaded_biases['triad_qual'] * alpha
+                b97 = np.zeros(97, dtype=np.float32)
+                b97[0] = b_q[0]
+                for q in range(1, 9):
+                    b97[1 + (q - 1) * 12 : 1 + q * 12] = b_q[q]
+
+                head_biases = [
+                    b97,
+                    np.zeros(13, dtype=np.float32),
+                    loaded_biases['7th'] * alpha,
+                    loaded_biases['9th'] * alpha,
+                    loaded_biases['11th'] * alpha,
+                    loaded_biases['13th'] * alpha,
+                ]
+                for h in range(6):
+                    adj_log_p = np.log(np.maximum(probs[h], 1e-12)) + head_biases[h]
+                    adj_p = np.exp(adj_log_p - adj_log_p.max(axis=-1, keepdims=True))
+                    adj_p = adj_p / adj_p.sum(axis=-1, keepdims=True)
+                    adjusted_probs.append(adj_p)
+            elif log_priors is not None and tau > 0.0:
                 adjusted_probs = []
                 for h in range(6):
                     adj_log_p = np.log(np.maximum(probs[h], 1e-12)) + tau * log_priors[h]
@@ -321,9 +360,9 @@ def evaluate_heads(model_pattern='chordformer_head16(1.0,1.0)_s%d.best', max_son
     print(f"\nFinished inference on {total_evaluated_songs} total songs.")
 
     title = f"CHORDFORMER MULTI-HEAD EVALUATION ({mode_str}, {total_evaluated_songs} songs)"
-    format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual_preds, total_evaluated_songs, title, save_path, cm_dir=cm_dir, save_cm_csv=save_cm_csv)
+    format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual_preds, total_evaluated_songs, title, save_path, cm_dir=cm_dir, save_cm_csv=save_cm_csv, merge_1_to_5=merge_1_to_5)
 
-def format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual_preds, total_evaluated_songs, title, save_path=None, cm_dir='confusion_matrices', save_cm_csv=True):
+def format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual_preds, total_evaluated_songs, title, save_path=None, cm_dir='confusion_matrices', save_cm_csv=True, merge_1_to_5=False):
     report_lines = []
     report_lines.append("=" * 80)
     report_lines.append(title)
@@ -357,6 +396,22 @@ def format_report(all_targets, all_preds, all_triad_qual_targets, all_triad_qual
         df_triad_raw.to_csv(os.path.join(cm_dir, "cm_triad_quality_raw.csv"))
         df_triad_norm.to_csv(os.path.join(cm_dir, "cm_triad_quality_norm.csv"))
     report_lines.append("-" * 80)
+
+    # 1b. Triad Quality with 1 merged into 5 (Ablation / Downstream evaluation)
+    if merge_1_to_5:
+        TRIAD_8_NAMES = ['N', 'maj', 'min', 'sus4', 'sus2', 'dim', 'aug', '5']
+        t_m5 = np.where(t_valid == 8, 7, t_valid)
+        p_m5 = np.where(p_valid == 8, 7, p_valid)
+        acc_f_m5 = accuracy_score(t_m5, p_m5)
+        acc_c_m5 = recall_score(t_m5, p_m5, average='macro', zero_division=0)
+        report_lines.append("\n=== Triad Quality (Ablation: '1' merged into '5', 8 classes) ===")
+        report_lines.append(f"Frame-wise Accuracy (acc_frame): {acc_f_m5:.4f}")
+        report_lines.append(f"Class-wise Accuracy (acc_class): {acc_c_m5:.4f}")
+        report_lines.append("Detailed Report per Class:")
+        u_m5 = sorted(list(set(t_m5) | set(p_m5)))
+        names_m5 = [TRIAD_8_NAMES[idx] if idx < len(TRIAD_8_NAMES) else f"Triad_{idx}" for idx in u_m5]
+        report_lines.append(classification_report(t_m5, p_m5, labels=u_m5, target_names=names_m5, zero_division=0, digits=4))
+        report_lines.append("-" * 80)
 
     # 2. Root Pitch Class (Isolated: C, C#, D, Eb, E, F, F#, G, Ab, A, Bb, B)
     targets_0 = np.array(all_targets[0])
@@ -564,6 +619,10 @@ if __name__ == '__main__':
     parser.add_argument('--no_crf', action='store_true', help='Disable CRF decoding and use raw argmax')
     parser.add_argument('--tau', type=float, default=0.0, help='Logit adjustment temperature tau (default 0.0, set >0 to enable)')
     parser.add_argument('--no_logit_adj', action='store_true', help='Disable logit adjustment prior correction (equivalent to --tau 0.0)')
+    parser.add_argument('--bias_mode', type=str, default='none', choices=['none', 'marginal', 'f1_ascent'], help='Calibrated per-class bias mode (default: none)')
+    parser.add_argument('--alpha', type=float, default=1.0, help='Multiplier on calibrated biases (default: 1.0, or 0.75 for peak marginal F1)')
+    parser.add_argument('--bias_path', type=str, default='cache_data/calibrated_biases.pkl', help='Path to fitted biases pickle')
+    parser.add_argument('--merge_1_to_5', action='store_true', help='Evaluate triad head with 1 (lone root) merged into 5 (power chord)')
     parser.add_argument('--save_path', type=str, default=None, help='Custom output text file path')
     parser.add_argument('--cm_dir', type=str, default='confusion_matrices', help='Directory to save CSV confusion matrices (default: confusion_matrices)')
     parser.add_argument('--no_save_cm_csv', action='store_true', help='Disable saving CSV confusion matrices')
@@ -577,5 +636,17 @@ if __name__ == '__main__':
     else:
         penalty = 0.0 if args.no_crf else args.penalty
         tau = 0.0 if args.no_logit_adj else args.tau
-        evaluate_heads(model_pattern=args.model_pattern, max_songs=args.max_songs, crf_penalty=penalty, tau=tau, save_path=args.save_path, cm_dir=args.cm_dir, save_cm_csv=save_cm_csv)
+        evaluate_heads(
+            model_pattern=args.model_pattern,
+            max_songs=args.max_songs,
+            crf_penalty=penalty,
+            tau=tau,
+            save_path=args.save_path,
+            cm_dir=args.cm_dir,
+            save_cm_csv=save_cm_csv,
+            bias_mode=args.bias_mode,
+            alpha=args.alpha,
+            bias_path=args.bias_path,
+            merge_1_to_5=args.merge_1_to_5,
+        )
 
