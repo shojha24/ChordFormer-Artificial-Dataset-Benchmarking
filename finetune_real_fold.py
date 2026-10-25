@@ -30,8 +30,8 @@ def finetune_fold(
     learning_rates_dict=None,
     load_checkpoint=True,
     early_end_epochs=5,
-    replay_ratio=0.2,
-    replay_floor=0.15,
+    replay_ratio=0.15,
+    replay_floor=0.10,
     anneal_replay=True,
     loss_max_clip=10.0,
     loss_min_clip=None,
@@ -40,7 +40,7 @@ def finetune_fold(
     loss_ninth_clamp=True,
     loss_power=0.5,
     discriminative_lr=True,
-    val_metric='macro_f1',
+    val_metric='loss',
 ):
     if learning_rates_dict is None:
         learning_rates_dict = {1e-4: 12, 1e-5: 8, 1e-6: 4}
@@ -194,8 +194,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=36, help='Batch size (default: 36)')
     parser.add_argument('--val_batch_size', type=int, default=1, help='Validation batch size (default: 1)')
     parser.add_argument('--num_workers', type=int, default=8, help='Worker threads (default: 8)')
-    parser.add_argument('--replay_ratio', type=float, default=0.2, help='Synthetic replay ratio (default: 0.2)')
-    parser.add_argument('--replay_floor', type=float, default=0.15, help='Floor synthetic replay ratio under curriculum annealing (default: 0.15)')
+    parser.add_argument('--replay_ratio', type=float, default=0.15, help='Synthetic replay ratio (default: 0.15)')
+    parser.add_argument('--replay_floor', type=float, default=0.10, help='Floor synthetic replay ratio under curriculum annealing (default: 0.10)')
     parser.add_argument('--loss_max_clip', type=float, default=10.0, help='Max class weight clip in ReweightedLoss (default: 10.0)')
     parser.add_argument('--loss_min_clip', type=float, default=None, help='Min class weight clip in ReweightedLoss (default: None)')
     parser.add_argument('--no_b7_clamp', action='store_true', help='Disable b7 weight clamp on 7th extension head')
@@ -203,7 +203,7 @@ if __name__ == '__main__':
     parser.add_argument('--no_ninth_clamp', action='store_true', help='Disable safe floor clamp on natural 9th')
     parser.add_argument('--loss_power', type=float, default=0.5, help='Power exponent in ReweightedLoss (default: 0.5)')
     parser.add_argument('--no_discriminative_lr', action='store_true', help='Disable discriminative learning rates')
-    parser.add_argument('--val_metric', type=str, default='macro_f1', choices=['macro_f1', 'macro', 'loss', 'composite'], help='Validation checkpoint selection metric (default: macro_f1)')
+    parser.add_argument('--val_metric', type=str, default='loss', choices=['loss', 'macro_f1', 'macro', 'composite'], help='Validation checkpoint selection metric (default: loss)')
     parser.add_argument('--no_load_checkpoint', action='store_true', help='Do not resume from existing checkpoint')
     parser.add_argument('--no_anneal_replay', action='store_true', help='Disable replay ratio annealing across LR schedule')
     parser.add_argument('--quick_test', action='store_true', help='Run a quick 1-epoch test per fold')

@@ -49,10 +49,10 @@ Ensure the working directories and generated 5k assets (or 10k assets) are prese
                         │ (Stage 2 Fine-Tuning: Floor Curriculum Replay + Inverted Discrim LR)
                         ▼
                finetune_real_fold.py {0..4} --no_load_checkpoint
-               - Floor Curriculum Replay: 20% (1e-4) → 17.5% (1e-5) → 15% floor (1e-6)
-               - Corrected ReweightedLoss (power=0.5, max_clip=10.0, b7_clamp=True)
+               - Floor Curriculum Replay: 15% (1e-4) → 12.5% (1e-5) → 10% floor (1e-6)
+               - Matching ReweightedLoss (power=0.5, max_clip=10.0, b7_clamp=True)
                - Inverted Discriminative LR (Bottom: 0.2x, Top: 0.5x, Head: 1.0x)
-               - Macro-score checkpoint selection across 6 heads
+               - Fair 1-to-1 val_loss checkpoint selection (matching baseline NLL)
                         │
                         ▼
                cache_data/chordformer_head16_synth_ft_s{0..4}.best.sdict
@@ -130,64 +130,54 @@ python pretrain_synthetic.py \
 ## Step 4: Stage 2 — Real Domain Fine-Tuning
 
 Fine-tunes the pretrained model on real music folds using the anti-forgetting architecture:
-1. **Floor Curriculum Replay (`--replay_ratio 0.2 --replay_floor 0.15`):**
-   * **Phase 1 ($10^{-4}$ LR, epochs 1–12):** `20%` synthetic replay (grounds rare extension features).
-   * **Phase 2 ($10^{-5}$ LR, epochs 13–20):** `17.5%` synthetic replay (midpoint between base and floor).
-   * **Phase 3 ($10^{-6}$ LR, epochs 21–24):** `15%` floor synthetic replay (never 0%, completely preventing catastrophic forgetting of altered chords).
-   * Pass `--no_anneal_replay` if you wish to disable curriculum annealing and keep a flat 20%.
+1. **Floor Curriculum Replay (`--replay_ratio 0.15 --replay_floor 0.10`):**
+   * **Phase 1 ($10^{-4}$ LR, epochs 1–12):** `15%` synthetic replay (grounds rare extension features while preventing synthetic acoustic bias).
+   * **Phase 2 ($10^{-5}$ LR, epochs 13–20):** `12.5%` synthetic replay (midpoint between base and floor).
+   * **Phase 3 ($10^{-6}$ LR, epochs 21–24):** `10%` floor synthetic replay (maintains rare extension sensitivity without dominating natural song dynamics).
+   * Pass `--no_anneal_replay` if you wish to disable curriculum annealing and keep a flat 15%.
 2. **Inverted Discriminative LR:**
    * Bottom Conformer layers: $0.2 \times \text{lr}$ (preserves pretrained acoustic filters and vocal formant invariance).
    * Upper Conformer layers: $0.5 \times \text{lr}$.
    * Output classification heads: $1.0 \times \text{lr}$ (adapts rapidly to real class distributions).
-3. **Loss Reweighting (`--loss_power 0.5 --loss_max_clip 10.0`):** Weights rare chord alterations up to 10x without gradient explosion. Floors can be toggled via `--no_b7_clamp`, `--no_triad_clamp`, and `--no_ninth_clamp`.
-4. **Macro-F1 Checkpointing (`--val_metric macro_f1`):** Selects best checkpoints based on true macro-F1 (harmonic mean of precision and recall) across all 6 heads, avoiding pure-recall over-prediction bias.
+3. **Loss Reweighting (`--loss_power 0.5 --loss_max_clip 10.0`):** Weights rare chord alterations up to 10x without gradient explosion, matching the control benchmark loss function.
+4. **Validation Loss Checkpointing (`--val_metric loss`):** Evaluates real validation negative log-likelihood (NLL). This matches the exact checkpointing criterion of the 1217 baseline, ensuring a strict 1-to-1 comparison free from metric confounders.
 
-### Retraining Options: Stacked vs. Single Correction
+### Standard Training Command
 
-If retraining Stage 2 fine-tuning to fix prior shift at the root:
-
-* **Recommended Option A (Replay-dominant, unweighted loss):**
-  Uses synthetic replay for acoustic feature generalization without artificial loss magnification:
-  ```bash
-  python finetune_real_fold.py -1 \
-    --no_load_checkpoint \
-    --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
-    --save_prefix chordformer_head16_synth_ft_unweighted \
-    --replay_ratio 0.15 \
-    --replay_floor 0.10 \
-    --loss_power 0.0 \
-    --no_b7_clamp --no_triad_clamp --no_ninth_clamp \
-    --val_metric macro_f1
-  ```
-
-* **Recommended Option B (Reweight-dominant, no synthetic replay):**
-  Uses conservative square-root inverse-frequency loss on purely real music:
-  ```bash
-  python finetune_real_fold.py -1 \
-    --no_load_checkpoint \
-    --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
-    --save_prefix chordformer_head16_synth_ft_reweighted \
-    --replay_ratio 0.0 \
-    --loss_power 0.25 \
-    --loss_max_clip 5.0 \
-    --no_b7_clamp --no_triad_clamp --no_ninth_clamp \
-    --val_metric macro_f1
-  ```
-
-### Standard Run (All 5 Folds with Macro-F1 Selection):
+#### Test on Fold 0:
 ```bash
-python finetune_real_fold.py -1 \
-  --no_load_checkpoint \
-  --pretrained_path cache_data/chordformer_head16_synth_pretrain.best.sdict \
-  --save_prefix chordformer_head16_synth_ft \
-  --replay_ratio 0.20 \
-  --replay_floor 0.15 \
-  --loss_max_clip 10.0 \
+python finetune_real_fold.py 0 \
+  --save_prefix chordformer_head16_synth_ft_loss \
+  --val_metric loss \
+  --replay_ratio 0.15 \
+  --replay_floor 0.10 \
   --loss_power 0.5 \
-  --val_metric macro_f1
+  --loss_max_clip 10.0 \
+  --no_load_checkpoint
 ```
 
-* **Output Checkpoints:** `cache_data/chordformer_head16_synth_ft_s0.best.sdict` ... `s4.best.sdict`.
+#### Run All 5 Folds:
+```bash
+python finetune_real_fold.py -1 \
+  --save_prefix chordformer_head16_synth_ft_loss \
+  --val_metric loss \
+  --replay_ratio 0.15 \
+  --replay_floor 0.10 \
+  --loss_power 0.5 \
+  --loss_max_clip 10.0 \
+  --no_load_checkpoint
+```
+
+* **Output Checkpoints:** `cache_data/chordformer_head16_synth_ft_loss_s0.best.sdict` ... `s4.best.sdict`.
+
+### Alternative Checkpoint Metrics & Ablations (Explained)
+
+* **`--val_metric macro_f1` (Precision-Aware Balance):**
+  If optimizing specifically for multi-class F1 rather than likelihood, `--val_metric macro_f1` tracks the harmonic mean of precision and recall across all 6 heads. Unlike `--val_metric macro` (which only rewards recall and caused historical over-prediction), `macro_f1` penalizes false-positive explosions.
+* **`--val_metric macro` (Legacy Pure Recall):**
+  Monitors unweighted class recall. Not recommended for standard training as it rewards shotgunning rare class predictions at the expense of precision and frame accuracy.
+* **Zero-Replay Ablation (`--replay_ratio 0.0`):**
+  Fine-tunes purely on real music with no synthetic replay during Stage 2 to measure pure transfer learning from Stage 1 weights.
 
 ---
 
@@ -248,7 +238,7 @@ python calibrate_biases.py \
 * **Option C: Raw Unadjusted Inference (Baseline):**
   ```bash
   python eval_heads.py \
-    --model_pattern "chordformer_head16_synth_ft_s%d.best" \
+    --model_pattern "chordformer_head16_synth_ft_loss_s%d.best" \
     --crf_penalty 2.0 \
     --tau 0.0 \
     --save_path eval_heads_synth_ft_report.txt
@@ -287,8 +277,8 @@ python create_synth_storage.py --overwrite --num_workers 16
 # 2. Stage 1: Pretrain on synthetic 5k corpus (~10,500 steps, 7 epochs)
 python pretrain_synthetic.py
 
-# 3. Stage 2: Fine-tune on real folds (Fold 0 test, warm-starting from Stage 1 with Macro-F1 checkpoint selection)
-python finetune_real_fold.py 0 --no_load_checkpoint --replay_ratio 0.2 --replay_floor 0.15 --val_metric macro_f1
+# 3. Stage 2: Fine-tune on real folds (Fold 0 test, warm-starting from Stage 1 with 1-to-1 val_loss checkpoint selection)
+python finetune_real_fold.py 0 --no_load_checkpoint --replay_ratio 0.15 --replay_floor 0.10 --val_metric loss --save_prefix chordformer_head16_synth_ft_loss
 
 # 4. Stage 3: Post-Hoc 5-Fold Cross-Fitted Bias Calibration & Pareto Frontier Evaluation
 python calibrate_biases.py --penalty 2.0 --save_report eval_bias_calibration_report.txt
