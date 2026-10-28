@@ -62,6 +62,8 @@ Ensure the working directories and generated 5k assets (or 10k assets) are prese
                - 400x Fast CRF Viterbi Decoding across all 6 heads
                - Post-Hoc Logit Adjustment (tau=0.0 / --no_logit_adj recommended for rare recall)
                evaluate_synth_vs_baseline.py (Gain vs. Real Baseline)
+               val_chordformer_head16.py (HMM Decoding to Harte .lab)
+               test_for_all_mirex.py (mir_eval MIREX / WCSR Duration-Weighted Recall)
 ```
 
 ---
@@ -252,6 +254,47 @@ python evaluate_synth_vs_baseline.py \
   --out eval_comparison_calibrated_summary.txt
 ```
 
+### 6.3 Standard MIREX / WCSR Evaluation (Segment-Level Duration-Weighted Recall)
+
+To evaluate according to standard MIREX Automatic Chord Recognition (ACR) conventions using Weighted Chord Symbol Recall (WCSR):
+
+#### 1. Decode Test Tracks with HMM to Harte `.lab` Files:
+Inference runs across the 5 cross-validation folds on the 1,217 real songs, decoding multi-head frame predictions into standard chord interval annotations via `XHMMDecoder`:
+
+```bash
+python val_chordformer_head16.py "<model_pattern>" <chord_dict>
+```
+
+* **Fine-Tuned Checkpoints:**
+  ```bash
+  python val_chordformer_head16.py "chordformer_head16_synth_ft_loss_s%d.best" full
+  ```
+* **Baseline Real 1217 Checkpoints:**
+  ```bash
+  python val_chordformer_head16.py "chordformer_head16(1.0,1.0)_s%d.best" full
+  ```
+* **Output:** Generates 1,217 `.lab` files under `output/output_<model_pattern>_hmm_<chord_dict>/jam/*.lab`.
+
+#### 2. Compute Duration-Weighted MIREX / WCSR Accuracies:
+Evaluates the decoded `.lab` files against the ground-truth annotations in `chord_data_1217/chordlab/` using `mir_eval.chord.weighted_accuracy`:
+
+```bash
+python test_for_all_mirex.py "output/<output_folder>/jam/"
+```
+
+* **Example for fine-tuned models:**
+  ```bash
+  python test_for_all_mirex.py "output/output_chordformer_head16_synth_ft_loss_s%d.best_hmm_full/jam/"
+  ```
+* **Example for baseline 1217 models:**
+  ```bash
+  python test_for_all_mirex.py "output/output_chordformer_head16(1.0,1.0)_s%d.best_hmm_full/jam/"
+  ```
+* **Metrics Computed:**
+  * **WCSR Scores (%):** Root, Thirds, MajorMinor, Triads, Sevenths, Tetrads, MIREX, and bass-inversions (`thirds_inv`, `majmin_inv`, `triads_inv`, `sevenths_inv`, `tetrads_inv`).
+  * **Detailed Quality Breakdown:** Per-class Ground Truth Duration (s), GT Share, Recall, Precision, F1-Score, and Top Confusion.
+  * **Output Artifacts:** Writes `eval_results.txt`, `eval_detailed_breakdown.txt`, `confusion_matrix.pdf`, and `confusion_matrix.png`.
+
 ---
 
 ## Key Diagnostics & Empirical Notes
@@ -286,4 +329,8 @@ python calibrate_biases.py --penalty 2.0 --save_report eval_bias_calibration_rep
 # 5. Stage 4: Multi-head benchmark comparison against baseline
 python eval_heads.py --model_pattern "chordformer_head16_synth_ft_s%d.best" --tau 0.0 --save_path eval_heads_synth_ft_report.txt
 python evaluate_synth_vs_baseline.py --baseline eval_heads_report.txt --synth eval_heads_synth_ft_report.txt
+
+# 6. Stage 5: Standard MIREX / WCSR Duration-Weighted Evaluation
+python val_chordformer_head16.py "chordformer_head16_synth_ft_loss_s%d.best" full
+python test_for_all_mirex.py "output/output_chordformer_head16_synth_ft_loss_s%d.best_hmm_full/jam/"
 ```
