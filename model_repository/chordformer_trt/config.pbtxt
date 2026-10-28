@@ -1,0 +1,57 @@
+name: "chordformer_trt"
+platform: "tensorrt_plan"
+max_batch_size: 32
+
+input [
+  {
+    name: "cqt_input"
+    data_type: TYPE_FP32
+    dims: [ 431, 252 ]
+  }
+]
+
+output [
+  {
+    name: "root_triad"
+    data_type: TYPE_FP32
+    dims: [ 431, 97 ]
+  },
+  {
+    name: "bass"
+    data_type: TYPE_FP32
+    dims: [ 431, 13 ]
+  },
+  {
+    name: "seventh"
+    data_type: TYPE_FP32
+    dims: [ 431, 4 ]
+  },
+  {
+    name: "ninth"
+    data_type: TYPE_FP32
+    dims: [ 431, 4 ]
+  },
+  {
+    name: "eleventh"
+    data_type: TYPE_FP32
+    dims: [ 431, 3 ]
+  },
+  {
+    name: "thirteenth"
+    data_type: TYPE_FP32
+    dims: [ 431, 3 ]
+  }
+]
+
+instance_group [
+  {
+    count: 2
+    kind: KIND_GPU
+    gpus: [ 0 ]
+  }
+]
+
+dynamic_batching {
+  preferred_batch_size: [ 4, 8, 16 ]
+  max_queue_delay_microseconds: 5000
+}

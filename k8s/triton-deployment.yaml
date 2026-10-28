@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: triton-chordformer
+  labels:
+    app: triton-chordformer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: triton-chordformer
+  template:
+    metadata:
+      labels:
+        app: triton-chordformer
+    spec:
+      containers:
+      - name: tritonserver
+        image: nvcr.io/nvidia/tritonserver:24.08-py3
+        command: ["tritonserver"]
+        args:
+        - "--model-repository=/models"
+        - "--strict-model-config=false"
+        - "--log-verbose=0"
+        ports:
+        - containerPort: 8000
+          name: http
+        - containerPort: 8001
+          name: grpc
+        - containerPort: 8002
+          name: metrics
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+            memory: "16Gi"
+            cpu: "4"
+          requests:
+            nvidia.com/gpu: "1"
+            memory: "8Gi"
+            cpu: "2"
+        livenessProbe:
+          httpGet:
+            path: /v2/health/live
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /v2/health/ready
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 5
+        volumeMounts:
+        - name: model-repo
+          mountPath: /models
+      volumes:
+      - name: model-repo
+        hostPath:
+          path: /mnt/disks/models/model_repository
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: triton-chordformer-service
+  labels:
+    app: triton-chordformer
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  - port: 8001
+    targetPort: 8001
+    name: grpc
+  - port: 8002
+    targetPort: 8002
+    name: metrics
+  selector:
+    app: triton-chordformer
