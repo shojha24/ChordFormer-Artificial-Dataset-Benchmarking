@@ -77,6 +77,8 @@ def eval_jam(cross_net_name,chord_dict_name='ismir2017',show=False,use_bass=True
         entry.free()
 
 if __name__ == '__main__':
-    eval_jam('chordformer_head16(1.0,1.0)_s%d.best',chord_dict_name='full')
-    eval_jam('chordformer_head16(1.0,1.0)_s%d.best',chord_dict_name='submission')
+    import sys
+    net_pattern = sys.argv[1] if len(sys.argv) > 1 else 'chordformer_head16(1.0,1.0)_s%d.best'
+    dict_name = sys.argv[2] if len(sys.argv) > 2 else 'full'
+    eval_jam(net_pattern, chord_dict_name=dict_name)
 
