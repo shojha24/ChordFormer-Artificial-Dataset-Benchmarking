@@ -1,5 +1,6 @@
 from confor_head16 import ChordNet,chord_limit,ChordNetCNN
 from mir.nn.train import NetworkInterface
+from mir.nn.data_storage import FramedH5DataStorage
 import mir.io as io
 import new_datasets
 from extractors.cqt import CQTV2,SimpleChordToID
@@ -71,6 +72,22 @@ def eval_jam(cross_net_name, chord_dict_name='ismir2017', show=False, use_bass=T
     tag_list = create_tag_list(chord_limit)
     hmm = XHMMDecoder(template_file='data/%s_chord_list.txt' % chord_dict_name, use_bass=use_bass, use_7=use_7, use_extended=use_extended)
 
+    # Use pre-extracted H5 storage (1217 precomputed CQTs) when available to avoid redundant on-the-fly CQT re-extraction
+    storage_x = None
+    name_to_id = {}
+    if os.path.exists('data/all_1217.csv') and os.path.exists('dataset/jams_cqt.h5d'):
+        try:
+            with open('data/all_1217.csv', 'r') as f_csv:
+                song_names = [line.strip() for line in f_csv.readlines()]
+            name_to_id = {name: i for i, name in enumerate(song_names)}
+            storage_x = FramedH5DataStorage('jams_cqt')
+            storage_x.load_meta()
+            storage_x.load()
+            print("Loaded precomputed CQTs directly from dataset/jams_cqt.h5d (instant loading).")
+        except Exception as e:
+            print(f"Warning: Could not open dataset/jams_cqt.h5d ({e}), falling back to on-the-fly CQT.")
+            storage_x = None
+
     pending_entries = []
     for entry in jam.entries:
         save_name = 'output/output_%s_hmm_%s/%s.lab' % (cross_net_name, chord_dict_name, entry.name)
@@ -89,7 +106,14 @@ def eval_jam(cross_net_name, chord_dict_name='ismir2017', show=False, use_bass=T
     def _task_generator():
         for i, (entry, save_name) in enumerate(pending_entries):
             fold_id = get_test_fold_by_name(entry.name)
-            probs = nets[fold_id].inference(entry.cqt)
+            keyword = entry.name.replace('jam/', '')
+            if storage_x is not None and keyword in name_to_id:
+                song_id = name_to_id[keyword]
+                song_len = storage_x.length[song_id]
+                cqt = storage_x.locate(song_id, 0, song_len)
+            else:
+                cqt = entry.cqt
+            probs = nets[fold_id].inference(cqt)
             entry.free()
             if (i + 1) % 50 == 0 or (i + 1) == remaining:
                 print(f"[GPU] Inference queued: {i + 1}/{remaining} tracks...")
