@@ -259,19 +259,19 @@ python evaluate_synth_vs_baseline.py \
 To evaluate according to standard MIREX Automatic Chord Recognition (ACR) conventions using Weighted Chord Symbol Recall (WCSR):
 
 #### 1. Decode Test Tracks with HMM to Harte `.lab` Files:
-Inference runs across the 5 cross-validation folds on the 1,217 real songs, decoding multi-head frame predictions into standard chord interval annotations via `XHMMDecoder`:
+Inference runs across the 5 cross-validation folds on the 1,217 real songs, decoding multi-head frame predictions into standard chord interval annotations via `XHMMDecoder`. Decoding is parallelized across CPU cores (`--n_jobs 12` by default):
 
 ```bash
-python val_chordformer_head16.py "<model_pattern>" <chord_dict>
+python val_chordformer_head16.py "<model_pattern>" <chord_dict> [--n_jobs 12]
 ```
 
 * **Fine-Tuned Checkpoints:**
   ```bash
-  python val_chordformer_head16.py "chordformer_head16_synth_ft_loss_s%d.best" full
+  python val_chordformer_head16.py "chordformer_head16_synth_ft_loss_s%d.best" full --n_jobs 12
   ```
 * **Baseline Real 1217 Checkpoints:**
   ```bash
-  python val_chordformer_head16.py "chordformer_head16(1.0,1.0)_s%d.best" full
+  python val_chordformer_head16.py "chordformer_head16(1.0,1.0)_s%d.best" full --n_jobs 12
   ```
 * **Output:** Generates 1,217 `.lab` files under `output/output_<model_pattern>_hmm_<chord_dict>/jam/*.lab`.
 
@@ -331,6 +331,6 @@ python eval_heads.py --model_pattern "chordformer_head16_synth_ft_s%d.best" --ta
 python evaluate_synth_vs_baseline.py --baseline eval_heads_report.txt --synth eval_heads_synth_ft_report.txt
 
 # 6. Stage 5: Standard MIREX / WCSR Duration-Weighted Evaluation
-python val_chordformer_head16.py "chordformer_head16_synth_ft_loss_s%d.best" full
+python val_chordformer_head16.py "chordformer_head16_synth_ft_loss_s%d.best" full --n_jobs 12
 python test_for_all_mirex.py "output/output_chordformer_head16_synth_ft_loss_s%d.best_hmm_full/jam/"
 ```
