@@ -51,34 +51,62 @@ def visualize_any(net,file,chord_dict_name='ismir2017'):
     #exporter.close()
     entry.visualize(['prob','hmm_chord'])
 
-def eval_jam(cross_net_name,chord_dict_name='ismir2017',show=False,use_bass=True,use_7=True,use_extended=True):
-    nets=[NetworkInterface(ChordNet(None),cross_net_name%i,load_checkpoint=True) for i in range(5)]
-    jam=new_datasets.create_jam_dataset()
-    jam.append_extractor(CQTV2,'cqt')
-    jam.append_extractor(FrameCount,'n_frame',source='cqt')
-    #jam.activate_proxy('cqt',thread_number=-1,free=True)
-    tag_list=create_tag_list(chord_limit)
-    hmm=XHMMDecoder(template_file='data/%s_chord_list.txt'%chord_dict_name,use_bass=use_bass,use_7=use_7,use_extended=use_extended)
+def _decode_and_save_worker(hmm, entry, probs, save_name, show, tag_list):
+    chordlab = hmm.decode_to_chordlab(entry, probs, False)
+    if show:
+        prob_vis = np.concatenate(probs, axis=1)
+        entry.append_data((tag_list, prob_vis), io.SpectrogramIO, 'prob')
+        entry.append_data(chordlab, ChordLabIO, 'hmm_chord')
+        entry.visualize(['prob', 'hmm_chord'])
+    entry.append_data(chordlab, ChordLabIO, 'hmm_chord')
+    entry.save('hmm_chord', save_name, True)
+    entry.free()
+    return entry.name
+
+def eval_jam(cross_net_name, chord_dict_name='ismir2017', show=False, use_bass=True, use_7=True, use_extended=True, n_jobs=12):
+    nets = [NetworkInterface(ChordNet(None), cross_net_name % i, load_checkpoint=True) for i in range(5)]
+    jam = new_datasets.create_jam_dataset()
+    jam.append_extractor(CQTV2, 'cqt')
+    jam.append_extractor(FrameCount, 'n_frame', source='cqt')
+    tag_list = create_tag_list(chord_limit)
+    hmm = XHMMDecoder(template_file='data/%s_chord_list.txt' % chord_dict_name, use_bass=use_bass, use_7=use_7, use_extended=use_extended)
+
+    pending_entries = []
     for entry in jam.entries:
-        save_name='output/output_%s_hmm_%s/%s.lab'%(cross_net_name,chord_dict_name,entry.name)
-        if(os.path.exists(save_name)):
+        save_name = 'output/output_%s_hmm_%s/%s.lab' % (cross_net_name, chord_dict_name, entry.name)
+        actual_jam_path = 'output/output_%s_hmm_%s/jam/%s.lab' % (cross_net_name, chord_dict_name, entry.name)
+        if os.path.exists(save_name) or os.path.exists(actual_jam_path):
             continue
-        print(entry.name)
-        fold_id=get_test_fold_by_name(entry.name)
-        probs=nets[fold_id].inference(entry.cqt)
-        chordlab=hmm.decode_to_chordlab(entry,probs,False)
-        prob_vis=np.concatenate(probs,axis=1)
-        if(show):
-            entry.append_data((tag_list,prob_vis),io.SpectrogramIO,'prob')
-            entry.append_data(chordlab,ChordLabIO,'hmm_chord')
-            entry.visualize(['prob','hmm_chord'])
-        entry.append_data(chordlab,ChordLabIO,'hmm_chord')
-        entry.save('hmm_chord',save_name,True)
-        entry.free()
+        pending_entries.append((entry, save_name))
+
+    total = len(jam.entries)
+    remaining = len(pending_entries)
+    print(f"Total songs: {total} | Already decoded: {total - remaining} | Remaining to decode: {remaining} (n_jobs={n_jobs})")
+    if remaining == 0:
+        print("All songs already decoded.")
+        return
+
+    def _task_generator():
+        for i, (entry, save_name) in enumerate(pending_entries):
+            fold_id = get_test_fold_by_name(entry.name)
+            probs = nets[fold_id].inference(entry.cqt)
+            entry.free()
+            if (i + 1) % 50 == 0 or (i + 1) == remaining:
+                print(f"[GPU] Inference queued: {i + 1}/{remaining} tracks...")
+            yield hmm, entry, probs, save_name, show, tag_list
+
+    Parallel(n_jobs=n_jobs, verbose=5)(
+        delayed(_decode_and_save_worker)(*task) for task in _task_generator()
+    )
+    print(f"Finished parallel decoding for all {total} tracks.")
 
 if __name__ == '__main__':
-    import sys
-    net_pattern = sys.argv[1] if len(sys.argv) > 1 else 'chordformer_head16(1.0,1.0)_s%d.best'
-    dict_name = sys.argv[2] if len(sys.argv) > 2 else 'full'
-    eval_jam(net_pattern, chord_dict_name=dict_name)
+    import argparse
+    parser = argparse.ArgumentParser(description='Decode multi-head chord predictions via HMM')
+    parser.add_argument('model_pattern', nargs='?', default='chordformer_head16(1.0,1.0)_s%d.best', help='Model checkpoint pattern')
+    parser.add_argument('dict_name', nargs='?', default='full', help='Chord dictionary name')
+    parser.add_argument('--n_jobs', type=int, default=12, help='Number of parallel CPU worker jobs (default: 12)')
+    args = parser.parse_args()
+
+    eval_jam(args.model_pattern, chord_dict_name=args.dict_name, n_jobs=args.n_jobs)
 
