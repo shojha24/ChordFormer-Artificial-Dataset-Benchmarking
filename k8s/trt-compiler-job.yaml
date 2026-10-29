@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: trt-compiler
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: trt-compiler
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: trt-compiler
+        image: nvcr.io/nvidia/tritonserver:24.08-py3
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+        env:
+        - name: BUCKET_NAME
+          value: "${BUCKET_NAME}"
+        command: ["bash", "-c"]
+        args:
+        - |
+          set -e
+          echo "=== 1. Installing google-cloud-storage SDK ==="
+          pip install -q --root-user-action=ignore google-cloud-storage
+
+          echo "=== 2. Downloading model.onnx from gs://${BUCKET_NAME} ==="
+          python3 -c "
+          from google.cloud import storage
+          client = storage.Client()
+          bucket = client.bucket('${BUCKET_NAME}')
+          bucket.blob('model_repository/chordformer_trt/1/model.onnx').download_to_filename('/tmp/model.onnx')
+          print('Downloaded /tmp/model.onnx successfully!')
+          "
+
+          echo "=== 3. Compiling FP16 TensorRT Engine on L4 GPU ==="
+          /usr/src/tensorrt/bin/trtexec \
+              --onnx=/tmp/model.onnx \
+              --saveEngine=/tmp/model.plan \
+              --fp16 \
+              --minShapes=cqt_input:1x431x252 \
+              --optShapes=cqt_input:8x431x252 \
+              --maxShapes=cqt_input:32x431x252
+
+          echo "=== 4. Uploading model.plan back to GCS ==="
+          python3 -c "
+          from google.cloud import storage
+          client = storage.Client()
+          bucket = client.bucket('${BUCKET_NAME}')
+          bucket.blob('model_repository/chordformer_trt/1/model.plan').upload_from_filename('/tmp/model.plan')
+          bucket.blob('model_repository/chordformer_trt/1/model.onnx').delete()
+          print('Uploaded model.plan and removed model.onnx successfully!')
+          "
+          echo "=== COMPILATION & UPLOAD COMPLETE ==="

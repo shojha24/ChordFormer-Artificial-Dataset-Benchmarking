@@ -19,7 +19,7 @@ spec:
         image: nvcr.io/nvidia/tritonserver:24.08-py3
         command: ["tritonserver"]
         args:
-        - "--model-repository=/models"
+        - "--model-repository=gs://${BUCKET_NAME}/model_repository"
         - "--strict-model-config=false"
         - "--log-verbose=0"
         ports:
@@ -50,13 +50,6 @@ spec:
             port: 8000
           initialDelaySeconds: 30
           periodSeconds: 5
-        volumeMounts:
-        - name: model-repo
-          mountPath: /models
-      volumes:
-      - name: model-repo
-        hostPath:
-          path: /mnt/disks/models/model_repository
 ---
 apiVersion: v1
 kind: Service

@@ -1,0 +1,2 @@
+Concurrency,Inferences/Second,Client p50 (usec),Client p90 (usec),Client p95 (usec),Client p99 (usec),Client Avg Latency (usec),Server Avg Latency (usec),Server Queue (usec),Server Compute Input (usec),Server Compute Infer (usec),Server Compute Output (usec)
+1,92.52,10337,11651,12267,15560,10614,8419,5125,113,2827,212
