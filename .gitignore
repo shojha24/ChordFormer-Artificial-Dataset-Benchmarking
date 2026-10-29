@@ -19,3 +19,5 @@ cache_data/FrameCount
 .codegraph
 
 data/synth_naturalistic_lab
+
+model_repository/chordformer_trt/1

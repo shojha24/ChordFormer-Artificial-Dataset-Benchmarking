@@ -1,6 +1,5 @@
 from mir.nn.train import NetworkInterface
 import mir.io as io
-import datasets
 from extractors.cqt import CQTV2,SimpleChordToID
 from mir import io,DataEntry
 from io_new.chordlab_io import ChordLabIO
