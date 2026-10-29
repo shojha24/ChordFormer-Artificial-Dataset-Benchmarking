@@ -19,3 +19,5 @@ cache_data/FrameCount
 data/synth_naturalistic_lab
 
 cache_data/eval_test_cache_5folds.pkl
+
+model_repository/chordformer_trt/1
