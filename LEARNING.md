@@ -91,3 +91,23 @@ Accepting raw audio (`MP3/WAV/FLAC`) introduces CPU-heavy decoding (`ffmpeg`), C
   * **Tier 2 — Prod Balanced (`~$315–$350/mo`):** Swap `e2-medium` for `e2-standard-4` + HPA (~20–40+ concurrent uploads, autoscalable).
   * **Tier 3 — Prod HA (`~$655–$870/mo`):** Remove `--spot` to eliminate preemption risk (~40–80+ concurrent uploads).
   * **Cost Levers:** For 24/7 HA, a **1-year Committed Use Discount (CUD)** cuts On-Demand `g2-standard-4` GPU cost by ~37% (~$330–$390/mo). For dev/intermittent workloads, scaling `gpu-pool` to `0` when idle drops GPU spend to **~$0.25/hr** only while active (~$30/mo at 4 hrs/day).
+
+### 4. Operating Under a ≤ $100/Month Hard Budget Constraint
+
+Enforcing a hard **$100/month** ceiling changes the primary bottleneck from GPU arithmetic intensity to **fixed hourly idle cost** and forces explicit trade-offs between **cold-start latency**, **always-on availability**, and **per-request compute latency**:
+
+* **Why 24/7 Dedicated GPU Breaks the Budget:**
+  * A `g2-standard-4` Spot L4 node (~$0.25–$0.28/hr × 730 hrs ≈ `$175–$205/mo`) plus fixed GKE baseline overhead (`1 × e2-medium` + two default 100 GB `pd-balanced` disks + 1 External LB ≈ `$63/mo`) creates a **~$240/mo floor** for 24/7 GPU serving.
+
+* **Trade-Off 1: Scale-to-Zero GPU + Async API Pattern (`~$50–$95/mo`)**
+  * **Design:** Run `gpu-pool` with `--min-nodes=0 --max-nodes=1` and shrink node boot disks (`50 GB pd-standard`, saving ~$15/mo), leaving `~$50/mo` for **~180–200 active Spot L4 GPU hours/month** (~6 hrs/day).
+  * **Systems Implication:** Scaling a GKE GPU node from `0 → 1` and pulling the Triton container takes **~2–3 minutes**. A synchronous `POST /v1/predict` HTTP endpoint will time out during cold starts; the API must either adopt an **asynchronous job queue** (`202 Accepted` + job ID polling / webhook) or only wake Triton during active windows.
+
+* **Trade-Off 2: 24/7 CPU-Only ONNX Runtime (`~$40–$85/mo`)**
+  * **Design:** Drop the GKE GPU node pool entirely for 24/7 serving and run `model.onnx` (from [`export_ensemble_onnx.py`](export_ensemble_onnx.py)) directly inside FastAPI / ONNX Runtime on a single CPU node (`e2-standard-2` On-Demand or `e2-standard-4` Spot).
+  * **Systems Implication:** Eliminates GPU cost and cold starts completely, trading Triton's `~3–11 ms` GPU inference and `~400 seg/sec` throughput for `~100–300 ms` CPU inference per 10s segment and single-digit songs/minute throughput. This is the right trade-off if traffic is low-QPS and users tolerate ~2–6 seconds total processing time for a 3-minute song.
+
+* **Trade-Off 3: Stateless Artifact Persistence (`<$0.50/mo` Idle)**
+  * **Design:** Because `model.plan` (for L4) and `model.onnx` live in GCS, tearing down the cluster completely between workloads drops cost to nearly **$0/mo** while keeping zero-recompilation restarts (`~5 min` cluster spin-up, ~$0.30/hr active).
+  * **Guardrail:** Because [`k8s/trt-compiler-job.yaml`](k8s/trt-compiler-job.yaml) deletes `model.onnx` from GCS after building `model.plan`, keeping a local or GCS copy of `model.onnx` preserves optionality to fall back to CPU ONNX Runtime without re-exporting checkpoints.
+

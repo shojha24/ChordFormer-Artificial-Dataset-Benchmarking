@@ -212,6 +212,38 @@ Based on `benchmarks/BENCHMARK_REPORT.md` (`config.pbtxt`: `count: 2` GPU instan
 - **Spot vs. 1-Year CUD:** Spot saves ~$350–$400/mo on `g2-standard-4` (with 30s preemption risk); for 24/7 HA without preemption, a 1-year Committed Use Discount cuts On-Demand GPU cost by ~37% (~$330–$390/mo).
 - **Start on Tier 1, scale to Tier 2:** Deploy the API onto the existing `e2-medium` first to validate end-to-end with $0 added compute cost, then upgrade the CPU pool to `e2-standard-4` + HPA once concurrent upload demand exceeds ~10 requests.
 
+#### Budget-Constrained Architectures (≤ $100/month Hard Cap)
+
+> **Reality Check:** A **24/7 dedicated L4 GPU** cannot fit under $100/mo—even on Spot, `1 × g2-standard-4` alone runs ~$175–$205/mo (730 hrs), and baseline GKE overhead (`e2-medium` + two 100 GB disks + LB) adds ~$63/mo. To stay strictly **≤ $100/mo**, use one of the three patterns below:
+
+| Option | Monthly Cost | Availability / Cold Start | Best For |
+| :--- | :---: | :--- | :--- |
+| **A. GKE Scale-to-Zero GPU + Minimal Always-On CPU** | **~$50–$95/mo** | Always-on API; **2–3 min** GPU cold start from idle (~180–200 active GPU hrs/mo cap) | Keeping Triton + L4 TensorRT for burst/daily windows |
+| **B. On-Demand Cluster Spin-Up & Teardown** | **~$10–$60/mo** | Manual spin-up (~5 min); ~$0.30/hr only while running | Portfolio demos, benchmarking, batch runs |
+| **C. 24/7 CPU-Only ONNX Runtime (`e2-standard-2` / Spot `e2-standard-4`)** | **~$40–$85/mo** | Always-on, **0 cold start**; ~100–300 ms CPU inference per 10s segment | Low-QPS 24/7 API where sub-second SLA isn't required |
+
+**Practical Adjustments for Option A (≤ $100/mo with Triton + L4):**
+1. **Shrink default GKE boot disks** when creating pools (saves ~$14–$16/mo over default 100 GB `pd-balanced`):
+   ```bash
+   # Add to both clusters create and node-pools create:
+   --disk-size=50 --disk-type=pd-standard
+   ```
+2. **Enable `0 → 1` autoscaling on `gpu-pool`** so you only pay for the L4 when the `triton-chordformer` deployment is scaled up:
+   ```bash
+   gcloud container node-pools update gpu-pool \
+       --cluster=acr-triton-cluster \
+       --zone=${ZONE} \
+       --enable-autoscaling --min-nodes=0 --max-nodes=1
+   ```
+   ```bash
+   # Park GPU at $0/hr when idle, or wake it up when needed:
+   kubectl scale deployment/triton-chordformer --replicas=0
+   kubectl scale deployment/triton-chordformer --replicas=1
+   ```
+3. **Skip `trt-compiler` on subsequent restarts (Option B):** Once `model.plan` is stored in `gs://${BUCKET_NAME}/model_repository/chordformer_trt/1/model.plan` (<$0.50/mo), deleting and recreating the cluster only requires Section 2 + Section 4—skip Section 3 as long as you keep targeting NVIDIA L4.
+4. **Keep `model.onnx` locally (or backed up in GCS)** if you want Option C (CPU ONNX Runtime fallback), since `k8s/trt-compiler-job.yaml` deletes `model.onnx` from GCS after compiling `model.plan`.
+5. **Set a GCP Billing Budget Alert** at `$50`, `$80`, and `$100` in Cloud Billing so accidental 24/7 GPU uptime is caught early.
+
 ---
 
 ## Optional: Performance Benchmarking (`perf_analyzer`)
